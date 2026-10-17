@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sadayamuthu/unasked/internal/gitx"
 	"github.com/sadayamuthu/unasked/internal/gittest"
+	"github.com/sadayamuthu/unasked/internal/gitx"
 )
 
 func openRepo(t *testing.T, g *gittest.Repo) *gitx.Repo {
@@ -185,9 +185,84 @@ func TestSessionIDSanitized(t *testing.T) {
 			t.Errorf("name too long for %q", id)
 		}
 	}
+	x1, _ := CaptureDir(r, "a", "a/b")
+	x2, _ := CaptureDir(r, "a", "a?b")
+	if x1 == x2 {
+		t.Error("sanitised collisions must differ")
+	}
+	if ok, _ := CaptureDir(r, "a", "plain-1.2_x"); filepath.Base(ok) != "a-plain-1.2_x" {
+		t.Errorf("clean id altered: %q", ok)
+	}
 	d1, _ := CaptureDir(r, "a", "..")
 	d2, _ := CaptureDir(r, "a", ".")
 	if d1 == d2 {
 		t.Error("hashed ids should differ")
+	}
+}
+
+func TestPruneRemovesOrphanDir(t *testing.T) {
+	_, r := newRepo(t)
+	dir, _ := CaptureDir(r, "x", "orphan")
+	os.WriteFile(filepath.Join(dir, "transcript.jsonl"), []byte("secret"), 0o600)
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	os.Chtimes(dir, old, old)
+	fresh, _ := CaptureDir(r, "x", "fresh")
+	if err := Prune(r, 50, 30*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("orphan dir not removed")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("fresh orphan removed")
+	}
+}
+
+func TestCorruptMetaRecovers(t *testing.T) {
+	g, r := newRepo(t)
+	dir, _ := CaptureDir(r, "a", "s")
+	os.WriteFile(filepath.Join(dir, "meta.json"), []byte("{trunc"), 0o600)
+	src := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(src, []byte("x\n"), 0o600)
+	if _, err := RecordStop(r, "a", "s", src, nil); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := LoadMeta(dir); err != nil || m.Stop == nil {
+		t.Errorf("meta not rewritten: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "meta.json"), []byte("{trunc"), 0o600)
+	if _, err := RecordStart(r, "a", "s", g.Dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecordStopRejectsBadInputs(t *testing.T) {
+	_, r := newRepo(t)
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "t.jsonl")
+	os.WriteFile(src, []byte("x\n"), 0o600)
+	if runtime.GOOS != "windows" {
+		link := filepath.Join(tmp, "link.jsonl")
+		os.Symlink(src, link)
+		if _, err := RecordStop(r, "a", "s", link, nil); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("symlink transcript err = %v", err)
+		}
+	}
+	d1, d2 := filepath.Join(tmp, "one"), filepath.Join(tmp, "two", "one")
+	os.MkdirAll(d1, 0o755)
+	os.MkdirAll(d2, 0o755)
+	os.WriteFile(filepath.Join(d1, "f"), []byte("first"), 0o600)
+	os.WriteFile(filepath.Join(d2, "f"), []byte("second"), 0o600)
+	meta := filepath.Join(tmp, "meta.json")
+	os.WriteFile(meta, []byte("evil"), 0o600)
+	if _, err := RecordStop(r, "a", "s", src, []string{d1, d2, meta, "..", "."}); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := CaptureDir(r, "a", "s")
+	if b, _ := os.ReadFile(filepath.Join(dir, "one", "f")); string(b) != "first" {
+		t.Errorf("duplicate overwrote: %q", b)
+	}
+	if m, err := LoadMeta(dir); err != nil || m.Agent != "a" {
+		t.Errorf("meta.json clobbered: %v", err)
 	}
 }

@@ -62,9 +62,13 @@ func sanitize(raw string) string {
 	if len(s) > maxIDLen {
 		s = s[:maxIDLen]
 	}
+	sum := sha256.Sum256([]byte(raw))
+	h := hex.EncodeToString(sum[:])
 	if s == "" || s == "." || s == ".." {
-		sum := sha256.Sum256([]byte(raw))
-		return hex.EncodeToString(sum[:])[:16]
+		return h[:16]
+	}
+	if s != raw {
+		s += "-" + h[:8] // distinct raw ids must not collide after sanitising
 	}
 	return s
 }
@@ -81,10 +85,7 @@ func RecordStart(r *gitx.Repo, agent, session, cwd string) (*Meta, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, err := LoadMeta(dir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
+	m := metaOrNil(dir)
 	if m != nil && !m.Start.Taken.IsZero() {
 		return m, nil
 	}
@@ -112,10 +113,23 @@ func RecordStop(r *gitx.Repo, agent, session, transcriptPath string, extra []str
 	if err != nil {
 		return nil, err
 	}
+	st, err := os.Lstat(transcriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("capture transcript: %w", err)
+	}
+	if !st.Mode().IsRegular() {
+		return nil, errors.New("capture transcript: transcript is not a regular file")
+	}
 	if err := copyFile(transcriptPath, filepath.Join(dir, transcriptFile)); err != nil {
 		return nil, fmt.Errorf("capture transcript: %w", err)
 	}
+	seen := map[string]bool{}
 	for _, p := range extra {
+		name := filepath.Base(p)
+		if name == "." || name == ".." || name == string(filepath.Separator) || name == metaFile || name == transcriptFile || seen[name] {
+			continue
+		}
+		seen[name] = true
 		if err := copyTree(p, filepath.Join(dir, filepath.Base(p))); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("capture %s: %w", p, err)
 		}
@@ -124,16 +138,23 @@ func RecordStop(r *gitx.Repo, agent, session, transcriptPath string, extra []str
 	if err != nil {
 		return nil, err
 	}
-	m, err := LoadMeta(dir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
+	m := metaOrNil(dir)
 	now := time.Now()
 	if m == nil {
 		m = &Meta{Agent: agent, Session: session, Created: now}
 	}
 	m.Stop, m.Updated = &b, now
 	return m, writeMeta(dir, m)
+}
+
+// metaOrNil returns the meta in dir, or nil when it is missing or unreadable;
+// callers then rewrite it, so a corrupt meta.json never blocks capturing.
+func metaOrNil(dir string) *Meta {
+	m, err := LoadMeta(dir)
+	if err != nil {
+		return nil
+	}
+	return m
 }
 
 // LoadMeta reads dir/meta.json. A missing file satisfies errors.Is(err, fs.ErrNotExist).
@@ -263,9 +284,11 @@ func ListCaptured(r *gitx.Repo) ([]Session, error) {
 	return out, nil
 }
 
-// Prune removes captured sessions beyond the newest keep and those not
-// updated within maxAge, so whichever rule leaves fewer wins. Non-positive
-// arguments select the defaults (50, 30 days).
+// Prune removes captured session directories beyond the newest keep and those
+// not updated within maxAge, so whichever rule leaves fewer wins. Directories
+// without a valid meta.json count too, aged by their mtime, so orphaned
+// transcripts cannot linger. Non-positive arguments select the defaults
+// (50, 30 days).
 func Prune(r *gitx.Repo, keep int, maxAge time.Duration) error {
 	if keep <= 0 {
 		keep = defaultKeep
@@ -273,15 +296,36 @@ func Prune(r *gitx.Repo, keep int, maxAge time.Duration) error {
 	if maxAge <= 0 {
 		maxAge = defaultMaxAge
 	}
-	ss, err := ListCaptured(r)
+	base, err := r.UnaskedDir("sessions")
 	if err != nil {
 		return err
 	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return err
+	}
+	type item struct {
+		path    string
+		updated time.Time
+	}
+	var items []item
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(base, e.Name())
+		if m := metaOrNil(dir); m != nil {
+			items = append(items, item{dir, m.Updated})
+		} else if info, err := e.Info(); err == nil {
+			items = append(items, item{dir, info.ModTime()})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].updated.After(items[j].updated) })
 	cutoff := time.Now().Add(-maxAge)
 	var errs []error
-	for i, s := range ss {
-		if i >= keep || s.Meta.Updated.Before(cutoff) {
-			if err := os.RemoveAll(s.Path); err != nil {
+	for i, it := range items {
+		if i >= keep || it.updated.Before(cutoff) {
+			if err := os.RemoveAll(it.path); err != nil {
 				errs = append(errs, err)
 			}
 		}
