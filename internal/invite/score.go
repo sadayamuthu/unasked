@@ -97,7 +97,7 @@ type Input struct {
 //     with IDF docs = every hunk's tokens + every kept prompt's tokens.
 //   - The hunk is aligned to an edit event (Align). said =
 //     Overlap(Tokens(event.Statement), union of kept prompt tokens); 0 with
-//     no event. Statement tokens absent from the IDF docs weigh ln(1+N), as
+//     no event or a statement of < 4 content tokens (R9, as for prompts). Statement tokens absent from the IDF docs weigh ln(1+N), as
 //     the rarest possible token. A matching tell is recorded in Tell and
 //     stops Test 2 from inviting.
 //
@@ -158,11 +158,21 @@ func Score(in Input) []model.Scored {
 					w[t] = rarest
 				}
 			}
-			s.Said = Overlap(st, union, w)
+			if len(st) >= minPromptTokens {
+				s.Said = Overlap(st, union, w)
+			}
 			s.Tell = in.Tells.Match(s.Event.Statement)
 		}
 		decide(&s, askedTurn, in.Th, in.DiffOnly, hasTranscript)
 		out[i] = s
 	}
 	return out
+}
+
+func toTokenSet(ts []string) map[string]bool {
+	m := make(map[string]bool, len(ts))
+	for _, t := range ts {
+		m[t] = true
+	}
+	return m
 }

@@ -2,8 +2,9 @@ package invite
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sadayamuthu/unasked/internal/model"
 )
@@ -54,45 +55,43 @@ func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscri
 	}
 }
 
-// Forced is the one-hop forced-change pass (R4), run after Score. For each
-// hunk H that is neither invited nor high-risk, if some hunk I invited before
-// this pass changed or removed a symbol S (I.Symbols.Changed ∪ Removed), H's
-// Removed lines contain S as a word, and H differs only by that reference
-// being updated, checked both ways so nothing else can ride along:
+// Forced is the one-hop forced-change pass (R4, R7b), run after Score. For
+// each hunk H that is neither invited nor high-risk, if some hunk I invited
+// before this pass changed or removed a symbol S (I.Symbols.Changed ∪
+// Removed) and H's Removed lines contain S as a whole word, H is promoted to
+// invited with reason "required by <I.ID>" only when H is purely a reference
+// update, compared as raw text, not tokens:
 //
-//	Tokens(H.Removed) − Tokens(S) ⊆ Tokens(H.Added), and
-//	Tokens(H.Added) − Tokens(new names) ⊆ Tokens(H.Removed),
+//   - H has as many added lines as removed lines, and
+//   - for one new name N from I.Symbols.Added ∪ Changed, every removed[i]
+//     with each whole-word S replaced by N equals added[i], after collapsing
+//     runs of whitespace and trimming.
 //
-// where the new names are I.Symbols.Added ∪ Changed. H is then promoted to
-// invited with reason "required by <I.ID>".
-// Hunks promoted in this pass never promote others. The input is not modified.
+// A same-name signature change (N == S) therefore only matches whitespace-only
+// edits: a caller that gains an argument is listed, not auto-invited. Hunks
+// promoted in this pass never promote others. The input is not modified.
 func Forced(s []model.Scored) []model.Scored {
 	out := append([]model.Scored(nil), s...)
 	type source struct {
 		id       string
 		name     string
-		newNames map[string]bool // tokens of I's added/changed symbol names
-		word     *regexp.Regexp
+		newNames []string
 	}
 	var sources []source
 	for _, sc := range s {
 		if sc.Verdict != model.VerdictInvited {
 			continue
 		}
-		newNames := map[string]bool{}
+		var newNames []string
 		for _, sym := range append(append([]string(nil), sc.Hunk.Symbols.Added...), sc.Hunk.Symbols.Changed...) {
-			for _, t := range Tokens(bareName(sym)) {
-				newNames[t] = true
+			if n := bareName(sym); n != "" {
+				newNames = append(newNames, n)
 			}
 		}
-		syms := append(append([]string(nil), sc.Hunk.Symbols.Changed...), sc.Hunk.Symbols.Removed...)
-		for _, sym := range syms {
-			name := bareName(sym)
-			if name == "" {
-				continue
+		for _, sym := range append(append([]string(nil), sc.Hunk.Symbols.Changed...), sc.Hunk.Symbols.Removed...) {
+			if name := bareName(sym); name != "" {
+				sources = append(sources, source{sc.Hunk.ID, name, newNames})
 			}
-			word := regexp.MustCompile(`(^|[^\p{L}\p{N}_$])` + regexp.QuoteMeta(name) + `($|[^\p{L}\p{N}_$])`)
-			sources = append(sources, source{sc.Hunk.ID, name, newNames, word})
 		}
 	}
 	for i := range out {
@@ -100,13 +99,11 @@ func Forced(s []model.Scored) []model.Scored {
 		if h.Verdict == model.VerdictInvited || h.HighRisk || len(h.Hunk.Removed) == 0 {
 			continue
 		}
-		removed := strings.Join(h.Hunk.Removed, "\n")
 		for _, src := range sources {
-			if !src.word.MatchString(removed) || !onlyReferenceChanged(h.Hunk, src.name, src.newNames) {
-				continue
+			if referenceUpdate(h.Hunk, src.name, src.newNames) {
+				h.Verdict, h.Reason = model.VerdictInvited, "required by "+src.id
+				break
 			}
-			h.Verdict, h.Reason = model.VerdictInvited, "required by "+src.id
-			break
 		}
 	}
 	return out
@@ -118,30 +115,66 @@ func bareName(sym string) string {
 	return sym[strings.LastIndex(sym, ".")+1:]
 }
 
-// onlyReferenceChanged reports whether h's removed and added tokens are the
-// same apart from the old name (tokens of name) leaving and new names
-// (newNames) arriving.
-func onlyReferenceChanged(h model.Hunk, name string, newNames map[string]bool) bool {
-	removed := toTokenSet(Tokens(strings.Join(h.Removed, "\n")))
-	added := toTokenSet(Tokens(strings.Join(h.Added, "\n")))
-	return subsetExcept(removed, added, toTokenSet(Tokens(name))) &&
-		subsetExcept(added, removed, newNames)
-}
-
-// subsetExcept reports whether a − except ⊆ b.
-func subsetExcept(a, b, except map[string]bool) bool {
-	for t := range a {
-		if !except[t] && !b[t] {
-			return false
+// referenceUpdate reports whether h's added lines are exactly its removed
+// lines with whole-word old replaced by one of newNames (whitespace-collapsed).
+func referenceUpdate(h model.Hunk, old string, newNames []string) bool {
+	if len(h.Removed) != len(h.Added) {
+		return false
+	}
+	found := false
+	for _, l := range h.Removed {
+		if replaceWord(l, old, "") != l {
+			found = true
+			break
 		}
 	}
-	return true
+	if !found {
+		return false
+	}
+	for _, n := range newNames {
+		ok := true
+		for i, l := range h.Removed {
+			if squash(replaceWord(l, old, n)) != squash(h.Added[i]) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
-func toTokenSet(ts []string) map[string]bool {
-	m := make(map[string]bool, len(ts))
-	for _, t := range ts {
-		m[t] = true
+// replaceWord replaces every whole-word occurrence of old in s with repl. A
+// word boundary is any rune that is not a letter, digit, '_' or '$'.
+func replaceWord(s, old, repl string) string {
+	if old == "" {
+		return s
 	}
-	return m
+	var b strings.Builder
+	for {
+		j := strings.Index(s, old)
+		if j < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		before, _ := utf8.DecodeLastRuneInString(s[:j])
+		after, _ := utf8.DecodeRuneInString(s[j+len(old):])
+		b.WriteString(s[:j])
+		if (j == 0 || !identRune(before)) && (j+len(old) == len(s) || !identRune(after)) {
+			b.WriteString(repl)
+		} else {
+			b.WriteString(old)
+		}
+		s = s[j+len(old):]
+	}
+}
+
+func identRune(r rune) bool {
+	return r == '_' || r == '$' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func squash(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }

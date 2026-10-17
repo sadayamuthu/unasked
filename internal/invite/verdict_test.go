@@ -70,12 +70,27 @@ func TestForcedOneHop(t *testing.T) {
 	substr := model.Scored{Hunk: model.Hunk{ID: "h06", File: "e.go",
 		Removed: []string{"\tFooter()"}, Added: []string{"\tBarter()"}}, Verdict: model.VerdictUnasked, Reason: "no match"}
 
-	in := []model.Scored{def, caller, newCall, risky, extra, substr, rideAlong}
+	behaviour := func(id string, removed, added []string) model.Scored {
+		return model.Scored{Hunk: model.Hunk{ID: id, File: id + ".go", Removed: removed, Added: added},
+			Verdict: model.VerdictUnasked, Reason: "no match"}
+	}
+	in := []model.Scored{def, caller, newCall, risky, extra, substr, rideAlong,
+		behaviour("h09", []string{"\tn := Foo(x)"}, []string{"\tn := Bar(x)", "\treturn nil"}),
+		behaviour("h10", []string{"\tif !ok { Foo(x) }"}, []string{"\tif ok { Bar(x) }"}),
+		behaviour("h11", []string{"Foo(1)"}, []string{"Bar(0)"}),
+		behaviour("h12", []string{"Foo(true)"}, []string{"Bar(false)"}),
+		behaviour("h13", []string{"Foo(x)"}, []string{"Bar(x)", "Bar(x)"}),
+		behaviour("h14", []string{"Foo(a, b)"}, []string{"Bar(b, a)"}),
+		behaviour("h15", []string{"  n  :=   Foo(x)", "m := Foo"}, []string{"n := Bar(x)", "m := Bar  "}),
+	}
 	got := Forced(in)
 	if got[1].Verdict != model.VerdictInvited || got[1].Reason != "required by h01" {
 		t.Errorf("caller = %s %q, want invited / required by h01", got[1].Verdict, got[1].Reason)
 	}
-	for _, i := range []int{2, 3, 4, 5, 6} {
+	if got[13].Verdict != model.VerdictInvited {
+		t.Errorf("whitespace-only difference blocked promotion: %+v", got[13])
+	}
+	for _, i := range []int{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} {
 		if got[i].Verdict == model.VerdictInvited {
 			t.Errorf("%s promoted: %q", got[i].Hunk.ID, got[i].Reason)
 		}
@@ -86,9 +101,9 @@ func TestForcedOneHop(t *testing.T) {
 
 	// One pass: a hunk only reachable through a hunk promoted in this pass stays put.
 	caller2 := caller
-	caller2.Hunk.Symbols = model.SymbolDelta{Changed: []string{"Baz"}}
+	caller2.Hunk.Symbols = model.SymbolDelta{Removed: []string{"Baz"}, Added: []string{"Qux"}}
 	chained := model.Scored{Hunk: model.Hunk{ID: "h07", File: "f.go",
-		Removed: []string{"Baz()"}, Added: []string{"Baz()", ""}}, Verdict: model.VerdictUnasked, Reason: "no match"}
+		Removed: []string{"Baz()"}, Added: []string{"Qux()"}}, Verdict: model.VerdictUnasked, Reason: "no match"}
 	got = Forced([]model.Scored{def, caller2, chained})
 	if got[1].Verdict != model.VerdictInvited || got[2].Verdict == model.VerdictInvited {
 		t.Errorf("one-hop violated: %s, %s", got[1].Verdict, got[2].Verdict)

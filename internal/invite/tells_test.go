@@ -54,6 +54,9 @@ func TestTellsMatch(t *testing.T) {
 			t.Errorf("Match(%q) = %q, want no tell", s, got)
 		}
 	}
+	if got := tells.Match("While I\u2019m here, I renamed it."); got != "While I'm here" {
+		t.Errorf("curly apostrophe: Match = %q", got)
+	}
 	if got := tells.Match("WHILE WE ARE AT IT"); got != "WHILE WE ARE AT IT" {
 		t.Errorf("case-insensitive match = %q", got)
 	}

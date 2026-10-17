@@ -127,6 +127,18 @@ func TestScoreInvitesAskedHunk(t *testing.T) {
 	}
 }
 
+func TestScoreShortStatementSaysNothing(t *testing.T) {
+	h := model.Hunk{ID: "h01", File: "internal/cache/clean.go", Added: []string{"\tos.RemoveAll(cacheDir)"}}
+	tr := &model.Transcript{
+		Prompts: []model.Prompt{{Turn: 1, Text: "Add rate limiting to the public API with configurable env limits"}},
+		Edits:   []model.EditEvent{{Turn: 2, File: h.File, After: h.Added[0], Statement: "Updating the API."}},
+	}
+	got := Score(Input{Hunks: []model.Hunk{h}, Transcript: tr, Th: Default, Classify: notRisky})
+	if got[0].Said != 0 || got[0].Verdict == model.VerdictInvited {
+		t.Errorf("short statement: said=%.2f verdict=%s (%s)", got[0].Said, got[0].Verdict, got[0].Reason)
+	}
+}
+
 func TestScorePromptFiltering(t *testing.T) {
 	h := model.Hunk{ID: "h01", File: "a.go", Added: []string{"fixBug()"}}
 	ev := model.EditEvent{Turn: 2, File: "a.go", After: "fixBug()"}

@@ -70,12 +70,17 @@ func (t *Tells) add(name, text string) error {
 	return nil
 }
 
-// Match returns the text of the first tell phrase found in statement, in
-// file order, or "" if none fires. A nil *Tells matches nothing.
+// quotes folds typographic quotes to ASCII so "I’m" matches "i'm".
+var quotes = strings.NewReplacer("\u2019", "'", "\u2018", "'", "\u201c", `"`, "\u201d", `"`)
+
+// Match returns the text of the first tell phrase found in statement (with
+// curly quotes folded to ASCII), in file order, or "" if none fires. A nil
+// *Tells matches nothing.
 func (t *Tells) Match(statement string) string {
 	if t == nil {
 		return ""
 	}
+	statement = quotes.Replace(statement)
 	for _, re := range t.res {
 		if m := re.FindString(statement); m != "" {
 			return m
