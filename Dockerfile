@@ -1,7 +1,7 @@
 # Builds unasked into a small image with git.
 #   docker build -t unasked .
 #   docker run --rm -v "$PWD":/repo unasked --since origin/main
-FROM golang:1.25-bookworm AS build
+FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
