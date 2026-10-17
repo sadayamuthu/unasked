@@ -1,6 +1,7 @@
 package revert
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"os"
@@ -466,6 +467,9 @@ func TestUndoRefusesChangedFile(t *testing.T) {
 	if !errors.Is(err, ErrChangedSinceDrop) {
 		t.Fatalf("err = %v, want ErrChangedSinceDrop", err)
 	}
+	if !strings.Contains(err.Error(), "a.txt") || !strings.Contains(err.Error(), "unasked undo --force ") {
+		t.Fatalf("message %q should name a.txt and the --force command", err)
+	}
 	if f.g.Read("a.txt") != "user edit\n" {
 		t.Fatal("refused undo touched the file")
 	}
@@ -778,8 +782,9 @@ func TestDropCRLFMixedEndingsRefuses(t *testing.T) {
 	t.Logf("refused: %v", err)
 }
 
-// When the restore itself fails, the error names the snapshot and undo of
-// that id brings the tree back.
+// When the restore itself fails, the error names the snapshot, the tree is
+// left exactly as the drop made it, the after-state is recorded, and undo of
+// that id brings the tree back (refusing first if the user edited since).
 func TestRestoreFailureNamesSnapshot(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("needs unix directory permissions")
@@ -791,35 +796,325 @@ func TestRestoreFailureNamesSnapshot(t *testing.T) {
 	cur := f.scored(nil)
 	before := f.state()
 	sub := filepath.Join(f.g.Dir, "sub")
-	_, err := f.drop(cur, hashesOf(cur, byFile("sub/a.txt")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := Undo(f.r, "", false); err != nil {
-		t.Fatal(err)
-	}
-	p, err := Prepare(f.r, nil, cur, hashesOf(cur, byFile("sub/a.txt")), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = Drop(f.r, p, func() ([]model.Scored, error) {
-		if err := os.Chmod(sub, 0o500); err != nil {
+	failDrop := func() (string, map[string][32]byte) {
+		t.Helper()
+		p, err := Prepare(f.r, nil, cur, hashesOf(cur, byFile("sub/a.txt")), true)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return cur, nil // disagrees with the drop
-	})
-	os.Chmod(sub, 0o755)
-	if !errors.Is(err, ErrVerify) {
-		t.Fatalf("err = %v, want ErrVerify", err)
+		var dropped map[string][32]byte
+		_, err = Drop(f.r, p, func() ([]model.Scored, error) {
+			dropped = f.state()
+			if err := os.Chmod(sub, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			return cur, nil // disagrees with the drop
+		})
+		os.Chmod(sub, 0o755)
+		if !errors.Is(err, ErrVerify) {
+			t.Fatalf("err = %v, want ErrVerify", err)
+		}
+		snaps, _ := ListSnapshots(f.r)
+		if len(snaps) == 0 || snaps[0].Complete || !strings.Contains(err.Error(), "unasked undo "+snaps[0].ID) {
+			t.Fatalf("error %q should name the incomplete snapshot (%+v)", err, snaps)
+		}
+		if !sameState(dropped, f.state()) {
+			t.Fatal("failed restore left a partly restored tree")
+		}
+		return snaps[0].ID, dropped
 	}
-	snaps, _ := ListSnapshots(f.r)
-	if len(snaps) == 0 || snaps[0].Complete || !strings.Contains(err.Error(), "unasked undo "+snaps[0].ID) {
-		t.Fatalf("error %q should name the incomplete snapshot (%+v)", err, snaps)
-	}
-	if err := Undo(f.r, snaps[0].ID, false); err != nil {
+
+	id, _ := failDrop()
+	if err := Undo(f.r, id, false); err != nil {
 		t.Fatal(err)
 	}
 	if !sameState(before, f.state()) {
 		t.Fatal("undo did not restore the tree")
+	}
+
+	id, _ = failDrop()
+	f.g.Write("sub/a.txt", "user edit after the failed drop\n")
+	err := Undo(f.r, "", false)
+	if !errors.Is(err, ErrChangedSinceDrop) || !strings.Contains(err.Error(), "undo --force "+id) {
+		t.Fatalf("err = %v, want ErrChangedSinceDrop naming --force %s", err, id)
+	}
+	if f.g.Read("sub/a.txt") != "user edit after the failed drop\n" {
+		t.Fatal("refused undo touched the file")
+	}
+	if err := Undo(f.r, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("forced undo did not restore the tree")
+	}
+}
+
+// A drop interrupted after the snapshot (no after-state recorded) can only
+// be undone with --force.
+func TestUndoInterruptedDropNeedsForce(t *testing.T) {
+	f := fourHunks(t)
+	cur := f.scored(nil)
+	before := f.state()
+	p, err := Prepare(f.r, nil, cur, hashesOf(cur, byFile("a.txt")), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := takeSnapshot(f.r, touchedPaths(p.Hunks), p.Hunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.r.RunEnv(nil, bytes.NewReader(p.Patch), applyArgs...); err != nil {
+		t.Fatal(err)
+	}
+	err = Undo(f.r, "", false)
+	if !errors.Is(err, ErrChangedSinceDrop) || !strings.Contains(err.Error(), "undo --force "+snap.id) {
+		t.Fatalf("err = %v, want ErrChangedSinceDrop naming --force %s", err, snap.id)
+	}
+	if err := Undo(f.r, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("forced undo not byte-exact")
+	}
+}
+
+func threeFiles(t *testing.T) *fixture {
+	f := newFixture(t)
+	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
+		f.g.Write(n, fourLines)
+	}
+	f.setBase()
+	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
+		f.g.Write(n, "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\n")
+	}
+	return f
+}
+
+func failSecond(t *testing.T) {
+	n := 0
+	restoreHook = func(string) error {
+		if n++; n == 2 {
+			return errors.New("injected failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { restoreHook = nil })
+}
+
+// Undo whose second file fails to stage leaves all three files untouched.
+func TestUndoRestoreIsAllOrNothing(t *testing.T) {
+	f := threeFiles(t)
+	cur := f.scored(nil)
+	before := f.state()
+	if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+		t.Fatal(err)
+	}
+	dropped := f.state()
+	failSecond(t)
+	if err := Undo(f.r, "", false); err == nil || !strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("err = %v", err)
+	}
+	if !sameState(dropped, f.state()) {
+		t.Fatal("failed undo changed the tree (or left temp files)")
+	}
+	restoreHook = nil
+	if err := Undo(f.r, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("undo not byte-exact")
+	}
+}
+
+// A drop rollback whose second file fails to stage leaves the tree exactly
+// as the drop made it, and names the snapshot for undo.
+func TestDropRollbackIsAllOrNothing(t *testing.T) {
+	f := threeFiles(t)
+	cur := f.scored(nil)
+	before := f.state()
+	p, err := Prepare(f.r, nil, cur, hashesOf(cur, func(model.Scored) bool { return true }), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dropped map[string][32]byte
+	_, err = Drop(f.r, p, func() ([]model.Scored, error) {
+		dropped = f.state()
+		failSecond(t)
+		return cur, nil
+	})
+	if !errors.Is(err, ErrVerify) || !strings.Contains(err.Error(), "unasked undo ") {
+		t.Fatalf("err = %v", err)
+	}
+	if !sameState(dropped, f.state()) {
+		t.Fatal("failed rollback left a partly restored tree")
+	}
+	restoreHook = nil
+	if err := Undo(f.r, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("undo not byte-exact")
+	}
+}
+
+func TestDropKeepsFileModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no unix permissions")
+	}
+	f := newFixture(t)
+	f.g.Write("secret.txt", fourLines)
+	f.g.Write("run.sh", fourLines)
+	f.setBase()
+	f.g.Write("secret.txt", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\n")
+	f.g.Write("run.sh", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\n")
+	modes := map[string]os.FileMode{"secret.txt": 0o600, "run.sh": 0o755}
+	for n, m := range modes {
+		if err := os.Chmod(filepath.Join(f.g.Dir, n), m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cur := f.scored(nil)
+	check := func(when string) {
+		t.Helper()
+		for n, m := range modes {
+			st, err := os.Stat(filepath.Join(f.g.Dir, n))
+			if err != nil || st.Mode().Perm() != m {
+				t.Fatalf("%s: %s mode %v, want %v (%v)", when, n, st.Mode().Perm(), m, err)
+			}
+		}
+	}
+	if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+		t.Fatal(err)
+	}
+	check("after drop")
+	if err := Undo(f.r, "", false); err != nil {
+		t.Fatal(err)
+	}
+	check("after undo")
+}
+
+func TestVerifyRejectsExtraHunk(t *testing.T) {
+	f := fourHunks(t)
+	cur := f.scored(nil)
+	before := f.state()
+	p, err := Prepare(f.r, nil, cur, hashesOf(cur, byFile("a.txt")), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Drop(f.r, p, func() ([]model.Scored, error) {
+		s, err := f.rescore()
+		extra := model.Scored{Hunk: model.Hunk{ID: "h99", File: "x.txt", Hash: "ffffffffffff"}}
+		return append(s, extra), err
+	})
+	if !errors.Is(err, ErrVerify) {
+		t.Fatalf("err = %v, want ErrVerify", err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("tree changed")
+	}
+}
+
+func TestRegionCheckTerminators(t *testing.T) {
+	h := model.Hunk{ID: "h01", File: "f", OldStart: 2, OldLines: 1, NewStart: 2, NewLines: 1, Removed: []string{"x"}, Added: []string{"b"}}
+	pre := []byte("a\nb\nc\n")
+	if err := regionCheck(pre, []byte("a\nx\nc\n"), []model.Hunk{h}); err != nil {
+		t.Fatal(err)
+	}
+	if err := regionCheck(pre, []byte("a\nx\r\nc\n"), []model.Hunk{h}); err != nil {
+		t.Fatalf("eol conversion CR: %v", err)
+	}
+	last := h
+	pre2 := []byte("a\nb\n")
+	if err := regionCheck(pre2, []byte("a\nx"), []model.Hunk{last}); err == nil {
+		t.Fatal("missing terminator accepted")
+	}
+	last.NoNewlineOld = true
+	if err := regionCheck(pre2, []byte("a\nx"), []model.Hunk{last}); err != nil {
+		t.Fatal(err)
+	}
+	if err := regionCheck(pre2, []byte("a\nx\n"), []model.Hunk{last}); err == nil {
+		t.Fatal("extra terminator accepted")
+	}
+}
+
+func TestLockAndIDOrder(t *testing.T) {
+	f := fourHunks(t)
+	cur := f.scored(nil)
+	lockPath := filepath.Join(f.r.GitDir, "unasked", "revert.lock")
+	if err := os.WriteFile(lockPath, []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.drop(cur, hashesOf(cur, byFile("a.txt"))); !errors.Is(err, ErrLocked) {
+		t.Fatalf("err = %v, want ErrLocked", err)
+	}
+	if err := Undo(f.r, "", false); !errors.Is(err, ErrLocked) {
+		t.Fatalf("undo err = %v, want ErrLocked", err)
+	}
+	old := time.Now().Add(-11 * time.Minute)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// Snapshots dated in the future (clock skew): the new id still sorts
+	// last and survives pruning.
+	root, err := f.r.UnaskedDir("snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25; i++ {
+		id := time.Date(2099, 1, 1, 0, 0, i, 0, time.UTC).Format(idLayout)
+		if err := os.Mkdir(filepath.Join(root, id), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		m := []byte(`{"version":1,"id":"` + id + `","index_tree":"x","hunks":[],"files":[],"undone_at":"2099-01-01T00:00:00Z"}`)
+		if err := os.WriteFile(filepath.Join(root, id, "manifest.json"), m, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := f.drop(cur, hashesOf(cur, byFile("a.txt")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, _ := ListSnapshots(f.r)
+	if len(snaps) != 20 || snaps[0].ID != id {
+		t.Fatalf("got %d snapshots, newest %s, want 20 with %s first", len(snaps), snaps[0].ID, id)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatal("lock not released")
+	}
+}
+
+// git apply --unidiff-zero -R, reverting a pure insertion of a final line
+// without a newline, also strips the newline of the line above. The patch
+// carries that line on both sides so the result is exact.
+func TestDropEOFNoNewlineInsertion(t *testing.T) {
+	f := newFixture(t)
+	f.g.Write("a.txt", "func x() {}\ndelta\n")
+	f.setBase()
+	f.g.Write("a.txt", "alpha\ngamma\ndelta\ndelta")
+	cur := f.scored(nil)
+	if len(cur) != 2 {
+		t.Fatalf("want 2 hunks, got %d", len(cur))
+	}
+	before := f.state()
+	if _, err := f.drop(cur, []string{cur[1].Hunk.Hash}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.g.Read("a.txt"); got != "alpha\ngamma\ndelta\n" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	if err := Undo(f.r, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.drop(cur, []string{cur[0].Hunk.Hash, cur[1].Hunk.Hash}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.g.Read("a.txt"); got != "func x() {}\ndelta\n" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	if err := Undo(f.r, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("undo not byte-exact")
 	}
 }

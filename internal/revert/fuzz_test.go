@@ -67,9 +67,12 @@ func mutate(rng *rand.Rand, lines []string) []string {
 }
 
 // FuzzDropUndo builds a random small repo, makes random edits, drops a random
-// subset of the hunks and checks: either the drop succeeds (dropped hashes
-// gone, every other hash still present, untouched files byte-identical, undo
-// restores byte-exact) or it refuses with the tree unchanged.
+// subset of the hunks and checks that the drop succeeds (dropped hashes gone,
+// every other hash still present, untouched files byte-identical, index
+// unchanged, undo restores byte-exact). Only when the seed turns on eol
+// conversion may it refuse for any check; otherwise only the hash check may
+// refuse (zero-context re-diff realignment, see errRealigned). Every refusal
+// must leave the tree unchanged.
 func FuzzDropUndo(f *testing.F) {
 	for seed := uint64(1); seed <= 16; seed++ {
 		f.Add(seed)
@@ -77,6 +80,12 @@ func FuzzDropUndo(f *testing.F) {
 	f.Fuzz(func(t *testing.T, seed uint64) {
 		rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 		fx := newFixture(t)
+		// Only seeds that turn on eol conversion may see a refusal: there
+		// git rewrites whole files and the drop is allowed to refuse.
+		conversion := rng.IntN(5) == 0
+		if conversion {
+			fx.g.Write(".gitattributes", "* text eol=crlf\n")
+		}
 		nFiles := 1 + rng.IntN(len(fuzzNames))
 		files := make([]fuzzFile, nFiles)
 		for i := range files {
@@ -122,8 +131,15 @@ func FuzzDropUndo(f *testing.F) {
 		idx := fx.indexTree()
 		id, err := fx.drop(cur, drop)
 		if err != nil {
-			if !errors.Is(err, ErrApplyCheck) && !errors.Is(err, ErrVerify) {
-				t.Fatalf("unexpected error: %v", err)
+			// Without conversion the only acceptable refusal is a re-diff
+			// realignment, which is reported only after the byte-level
+			// region check has passed.
+			ok := errors.Is(err, errRealigned)
+			if conversion {
+				ok = errors.Is(err, ErrApplyCheck) || errors.Is(err, ErrVerify)
+			}
+			if !ok {
+				t.Fatalf("unexpected error (conversion=%v): %v", conversion, err)
 			}
 			if !sameState(before, fx.state()) {
 				t.Fatalf("refused drop changed the tree: %v", err)

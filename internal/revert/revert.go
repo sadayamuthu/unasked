@@ -28,7 +28,7 @@ var (
 	ErrDependency       = errors.New("another hunk depends on this one")
 	ErrApplyCheck       = errors.New("the reverse patch does not apply cleanly; nothing was changed")
 	ErrVerify           = errors.New("the drop did not verify; the working tree was restored")
-	ErrChangedSinceDrop = errors.New("changed since the drop (use --force to undo anyway)")
+	ErrChangedSinceDrop = errors.New("changed since the drop")
 	ErrNoSnapshot       = errors.New("no drop to undo")
 	// ErrNothingScored is returned for a drop without ids when there was no transcript.
 	ErrNothingScored = errors.New("nothing scored: name hunks explicitly")
@@ -126,7 +126,7 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 	if err := checkDependencies(current, want, kept); err != nil {
 		return nil, err
 	}
-	patch, err := buildPatch(p.Hunks)
+	patch, err := buildPatch(r.Dir, p.Hunks)
 	if err != nil {
 		return nil, err
 	}
@@ -279,16 +279,22 @@ func keepHeaderLine(line []byte) bool {
 // Each @@ line is renumbered: the new side stays the working-tree position;
 // the old side is that position shifted by the chosen hunks above it, so a
 // subset applies at the right lines even when unchosen hunks sit above it.
-func buildPatch(hs []model.Hunk) ([]byte, error) {
+//
+// One shape is rewritten: a pure insertion of a last line without a newline
+// ("@@ -a,0 +b @@ +x / \ No newline"). Reverted with --unidiff-zero, git
+// also strips the newline from the line before it. The unchanged line above
+// is added on both sides, which tells git that line keeps its newline.
+func buildPatch(work string, hs []model.Hunk) ([]byte, error) {
 	var out bytes.Buffer
 	file, offset := "", 0
+	var lines [][]byte
 	for _, h := range hs {
 		hdr, at, body := splitPatch(h.Patch)
 		if len(at) == 0 {
 			return nil, fmt.Errorf("%w: hunk %s has no @@ line", ErrApplyCheck, h.ID)
 		}
 		if h.File != file {
-			file, offset = h.File, 0
+			file, offset, lines = h.File, 0, nil
 			for _, line := range bytes.SplitAfter(hdr, []byte("\n")) {
 				if keepHeaderLine(line) {
 					out.Write(line)
@@ -303,7 +309,22 @@ func buildPatch(hs []model.Hunk) ([]byte, error) {
 		if h.OldLines == 0 {
 			oldStart--
 		}
-		fmt.Fprintf(&out, "@@ -%d,%d +%d,%d @@\n", oldStart, h.OldLines, h.NewStart, h.NewLines)
+		if h.OldLines == 0 && h.NoNewlineNew && h.NewStart > 1 {
+			if lines == nil {
+				b, err := os.ReadFile(workPath(work, h.File))
+				if err != nil {
+					return nil, fmt.Errorf("%w: %v", ErrApplyCheck, err)
+				}
+				lines = splitLines(b)
+			}
+			if h.NewStart-1 > len(lines) {
+				return nil, fmt.Errorf("%w: hunk %s is outside %s", ErrApplyCheck, h.ID, h.File)
+			}
+			prev := lines[h.NewStart-2]
+			fmt.Fprintf(&out, "@@ -%d,1 +%d,%d @@\n-%s+%s", oldStart, h.NewStart-1, h.NewLines+1, prev, prev)
+		} else {
+			fmt.Fprintf(&out, "@@ -%d,%d +%d,%d @@\n", oldStart, h.OldLines, h.NewStart, h.NewLines)
+		}
 		out.Write(body)
 		offset += h.NewLines - h.OldLines
 	}
@@ -317,6 +338,11 @@ func Drop(r *gitx.Repo, p *Plan, rescore func() ([]model.Scored, error)) (string
 	if p == nil || len(p.Hunks) == 0 {
 		return "", nil
 	}
+	unlock, err := lock(r)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	paths := touchedPaths(p.Hunks)
 	if err := checkPatch(r, p.Patch, paths); err != nil {
 		return "", err
@@ -327,6 +353,11 @@ func Drop(r *gitx.Repo, p *Plan, rescore func() ([]model.Scored, error)) (string
 	}
 	fail := func(cause error) (string, error) {
 		if rerr := snap.restore(r.Dir); rerr != nil {
+			// Record what the tree holds now, so a later plain undo can
+			// still tell whether the user changed anything since.
+			if aerr := snap.recordAfter(r.Dir, true); aerr != nil {
+				return "", fmt.Errorf("%w; restoring the snapshot also failed: %v; run `unasked undo --force %s`", cause, errors.Join(rerr, aerr), snap.id)
+			}
 			return "", fmt.Errorf("%w; restoring the snapshot also failed: %v; run `unasked undo %s`", cause, rerr, snap.id)
 		}
 		if rerr := os.RemoveAll(snap.dir); rerr != nil {
@@ -338,6 +369,11 @@ func Drop(r *gitx.Repo, p *Plan, rescore func() ([]model.Scored, error)) (string
 	if _, err := r.RunEnv(nil, bytes.NewReader(p.Patch), applyArgs...); err != nil {
 		return fail(fmt.Errorf("%w: %v", ErrApplyCheck, err))
 	}
+	// git apply rewrites files with umask permissions; put back each
+	// surviving file's own mode before verifying.
+	if err := snap.fixModes(r.Dir); err != nil {
+		return fail(fmt.Errorf("%w: %v", ErrVerify, err))
+	}
 	if err := snap.verifyRegions(r.Dir, p.Hunks); err != nil {
 		return fail(fmt.Errorf("%w: %v", ErrVerify, err))
 	}
@@ -346,14 +382,14 @@ func Drop(r *gitx.Repo, p *Plan, rescore func() ([]model.Scored, error)) (string
 		return fail(fmt.Errorf("%w: re-running the report: %v", ErrVerify, err))
 	}
 	if err := verifyHashes(p, after); err != nil {
-		return fail(fmt.Errorf("%w: %v", ErrVerify, err))
+		return fail(fmt.Errorf("%w: %w: %v", ErrVerify, errRealigned, err))
 	}
-	if err := snap.complete(r.Dir); err != nil {
+	if err := snap.recordAfter(r.Dir, false); err != nil {
 		return fail(err)
 	}
 	// The drop is done and verified; failing to prune old snapshots only
 	// leaves extra directories behind, so it must not report the drop failed.
-	_ = prune(r, keepSnapshots)
+	_ = prune(r, keepSnapshots, snap.id)
 	return snap.id, nil
 }
 
@@ -403,8 +439,14 @@ func touchedPaths(hs []model.Hunk) []string {
 	return out
 }
 
-// verifyHashes checks the rescored diff: every dropped hash is gone and every
-// other hash that was present is still present as often as before.
+// errRealigned marks a hash mismatch found after the byte-level region check
+// passed: the bytes are exactly right, but git's zero-context re-diff split
+// or aligned the remaining changes differently (typically around repeated
+// lines), so their hashes moved. §9.2 still requires the restore.
+var errRealigned = errors.New("the re-diff no longer matches the report's hunks")
+
+// verifyHashes checks the rescored diff: its hash multiset must equal the
+// one the plan was made from minus the dropped hashes, exactly.
 func verifyHashes(p *Plan, after []model.Scored) error {
 	dropped := map[string]bool{}
 	for _, h := range p.Hunks {
@@ -425,8 +467,13 @@ func verifyHashes(p *Plan, after []model.Scored) error {
 		}
 	}
 	for h, n := range want {
-		if got[h] < n {
+		if got[h] != n {
 			return fmt.Errorf("hunk %s changed or disappeared", h)
+		}
+	}
+	for h := range got {
+		if want[h] == 0 {
+			return fmt.Errorf("hunk %s appeared after the drop", h)
 		}
 	}
 	return nil
@@ -450,8 +497,9 @@ func countLines(b []byte) int {
 
 // regionCheck compares one file before and after the drop: every line outside
 // the dropped hunks must be byte-identical and in place, and each dropped
-// region must now hold the hunk's removed lines (allowing a CR that the
-// repo's eol conversion adds).
+// region must now hold the hunk's removed lines byte-for-byte, terminators
+// included (allowing only a CR before the LF that the repo's eol conversion
+// adds).
 func regionCheck(pre, post []byte, hs []model.Hunk) error {
 	w, t := splitLines(pre), splitLines(post)
 	wi, ti := 0, 0
@@ -472,8 +520,12 @@ func regionCheck(pre, post []byte, hs []model.Hunk) error {
 			return fmt.Errorf("%s is shorter than expected", h.File)
 		}
 		for i, want := range h.Removed {
-			got := strings.TrimSuffix(string(t[ti+i]), "\n")
-			if got != want && got != want+"\r" {
+			term := "\n"
+			if h.NoNewlineOld && i == len(h.Removed)-1 {
+				term = ""
+			}
+			got := string(t[ti+i])
+			if got != want+term && (term == "" || got != want+"\r"+term) {
 				return fmt.Errorf("%s line %d is not what hunk %s removed", h.File, ti+i+1, h.ID)
 			}
 		}
