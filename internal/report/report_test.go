@@ -429,3 +429,33 @@ func TestSingularCounts(t *testing.T) {
 		}
 	}
 }
+
+// m10: an UNASKED hunk shows its reason when it is a special one: generic
+// overlap only, or made by a shell command or by you.
+func TestUnaskedSpecialReasonShown(t *testing.T) {
+	sel, _, _ := fixture()
+	g := sc("h01", "a.go", 1, 1, model.VerdictUnasked, model.LabelDeletion, model.SeverityError)
+	g.Summary, g.Reason = "deleted function Ping", invite.GenericReason
+	sh := sc("h02", "go.sum", 1, 1, model.VerdictUnasked, model.LabelDependency, model.SeverityError)
+	sh.Summary, sh.Reason = "changed dependencies in go.sum", invite.ShellReason
+	plain := sc("h03", "c.go", 1, 1, model.VerdictUnasked, model.LabelRefactor, model.SeverityWarning)
+	plain.Summary, plain.Reason = "changed body of f", "no match"
+	r := Build(sel, []model.Scored{g, sh, plain}, nil)
+	var txt, md bytes.Buffer
+	if err := WriteText(&txt, r, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMarkdown(&md, r); err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"text": txt.String(), "md": md.String()} {
+		for _, want := range []string{invite.GenericReason, invite.ShellReason} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s lacks %q:\n%s", name, want, out)
+			}
+		}
+		if strings.Contains(out, "no match") {
+			t.Errorf("%s shows a plain reason:\n%s", name, out)
+		}
+	}
+}

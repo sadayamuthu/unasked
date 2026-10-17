@@ -69,7 +69,7 @@ func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOn
 	case !s.HighRisk && (asked >= th.Low || s.Said >= th.Low):
 		set(model.VerdictUnclear, "weak match", eventTurn)
 	case s.Asked >= th.Invite:
-		set(model.VerdictUnasked, genericReason, eventTurn)
+		set(model.VerdictUnasked, GenericReason, eventTurn)
 	default:
 		set(model.VerdictUnasked, "no match", eventTurn)
 	}

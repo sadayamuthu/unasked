@@ -32,9 +32,26 @@ func hunkLine(h HunkJSON) string {
 	return fmt.Sprintf("  %s  %s   %s  %s", h.ID, h.location(), h.Label, h.blurb())
 }
 
+// showReason reports whether a listed hunk's reason is printed under it:
+// always for an unclear hunk, and for an unasked one when the reason says
+// more than "no match" (only generic words overlap, a prompt may have asked
+// for it, or a shell command or the developer made it).
+func showReason(h HunkJSON) bool {
+	if h.Reason == "" || h.Reason == h.Summary {
+		return false
+	}
+	switch h.Verdict {
+	case string(model.VerdictUnclear):
+		return true
+	case string(model.VerdictUnasked):
+		return h.Reason == invite.GenericReason || h.Reason == invite.ShellReason || strings.HasPrefix(h.Reason, "you may have asked")
+	}
+	return false
+}
+
 func writeHunkText(w io.Writer, h HunkJSON, color bool) {
 	fmt.Fprintln(w, hunkLine(h))
-	if h.Verdict == string(model.VerdictUnclear) && h.Reason != "" && h.Reason != h.Summary {
+	if showReason(h) {
 		fmt.Fprintf(w, "        %s\n", oneLine(h.Reason))
 	}
 	if h.Statement != "" {

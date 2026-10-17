@@ -9,9 +9,9 @@ import (
 	"github.com/sadayamuthu/unasked/internal/model"
 )
 
-// genericReason is the reason when the evidence cap alone keeps a high-risk
+// GenericReason is the reason when the evidence cap alone keeps a high-risk
 // hunk unasked.
-const genericReason = "asked: generic overlap only"
+const GenericReason = "asked: generic overlap only"
 
 // maybeAskedReason is the reason for a high-risk hunk some prompt names
 // specifically (R36g); %d is that prompt's turn.

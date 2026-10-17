@@ -10,7 +10,7 @@ import (
 
 func mdHunk(w io.Writer, h HunkJSON) {
 	fmt.Fprintf(w, "- `%s` `%s` **%s** %s\n", h.ID, h.location(), h.Label, h.blurb())
-	if h.Verdict == string(model.VerdictUnclear) && h.Reason != "" && h.Reason != h.Summary {
+	if showReason(h) {
 		fmt.Fprintf(w, "  - %s\n", oneLine(h.Reason))
 	}
 	if h.Statement != "" {
