@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sadayamuthu/unasked/internal/invite"
@@ -229,5 +230,21 @@ func TestLoadRejectsBadLabel(t *testing.T) {
 	os.WriteFile(filepath.Join(cdir, "labels.json"), []byte(`{"a.go:x": "unclear"}`), 0o644)
 	if _, err := Load(dir); err == nil {
 		t.Fatal("Load accepted label \"unclear\"")
+	}
+}
+
+// m11: a case with labels but no transcript is a broken case, not one to
+// skip silently (its labels would never be checked).
+func TestLoadRejectsCaseWithoutTranscript(t *testing.T) {
+	dir := t.TempDir()
+	cdir := filepath.Join(dir, "codex", "x")
+	if err := os.MkdirAll(cdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cdir, "labels.json"), []byte(`{"a.go:x": "unasked"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "transcript.jsonl") {
+		t.Fatalf("Load err = %v, want a missing transcript.jsonl error", err)
 	}
 }

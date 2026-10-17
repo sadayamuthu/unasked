@@ -78,7 +78,16 @@ func Load(dir string) ([]Case, error) {
 		}
 		for _, c := range cases {
 			cdir := filepath.Join(dir, a.Name(), c.Name())
-			if _, err := os.Stat(filepath.Join(cdir, "transcript.jsonl")); err != nil {
+			if !c.IsDir() {
+				continue
+			}
+			_, terr := os.Stat(filepath.Join(cdir, "transcript.jsonl"))
+			_, lerr := os.Stat(filepath.Join(cdir, "labels.json"))
+			if terr != nil && lerr == nil {
+				// Labels without a transcript would never be checked.
+				return nil, fmt.Errorf("%s: labels.json without transcript.jsonl: %w", cdir, terr)
+			}
+			if terr != nil {
 				continue
 			}
 			labels, err := loadLabels(filepath.Join(cdir, "labels.json"))
