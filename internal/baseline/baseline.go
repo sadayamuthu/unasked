@@ -115,5 +115,13 @@ func withTempIndex(r *gitx.Repo, fn func(env []string) (Baseline, error)) (Basel
 	if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		return Baseline{}, err
 	}
+	// Git decides whether an entry is "racy" by comparing file mtimes with the
+	// index file's mtime. The copy must keep the real index's mtime, or an
+	// edit made in the same second as the last index write can be missed.
+	if st, err := os.Stat(real); err == nil {
+		if err := os.Chtimes(tmp, st.ModTime(), st.ModTime()); err != nil {
+			return Baseline{}, err
+		}
+	}
 	return fn([]string{"GIT_INDEX_FILE=" + tmp})
 }
