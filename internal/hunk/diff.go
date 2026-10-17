@@ -19,5 +19,40 @@ func Diff(r *gitx.Repo, fromTree, toTree string) ([]model.Hunk, int, error) {
 		return nil, 0, err
 	}
 	AssignIDs(hs)
+	fillSymbols(r, fromTree, toTree, hs)
 	return hs, bin, nil
+}
+
+// fillSymbols sets Hunk.Symbols, reading each file's old and new blob once.
+// A missing side (added or deleted file) is treated as empty.
+func fillSymbols(r *gitx.Repo, fromTree, toTree string, hs []model.Hunk) {
+	type pair struct{ old, new []byte }
+	cache := map[string]pair{}
+	for i := range hs {
+		h := &hs[i]
+		oldPath := h.File
+		if h.OldFile != "" {
+			oldPath = h.OldFile
+		}
+		key := oldPath + "\x00" + h.File
+		p, ok := cache[key]
+		if !ok {
+			if !h.NewFile {
+				p.old = blob(r, fromTree, oldPath)
+			}
+			if !h.DeletedFile {
+				p.new = blob(r, toTree, h.File)
+			}
+			cache[key] = p
+		}
+		h.Symbols = Symbols(h.File, p.old, p.new, *h)
+	}
+}
+
+func blob(r *gitx.Repo, tree, p string) []byte {
+	out, err := r.Run("cat-file", "blob", tree+":"+p)
+	if err != nil {
+		return nil
+	}
+	return out
 }
