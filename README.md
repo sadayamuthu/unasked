@@ -180,14 +180,14 @@ store. To report a wrong verdict or add an agent, see
 ## Development
 
 ```sh
-UNASKED_RELAX_CEILING=1 go test ./...   # full suite, incl. fixture gates and the 5,000-file perf test
-UNASKED_RELAX_CEILING=1 go test -short ./...   # skips the perf test
+go test ./...          # full suite, incl. fixture gates and the 5,000-file perf test
+go test -short ./...   # skips the perf test
 go vet ./...
 gofmt -l .
 ```
 
-`UNASKED_RELAX_CEILING=1` is what CI sets so that recall, not the 20%
-false-alarm target, decides a failing run; see [Fixtures](CONTRIBUTING.md#fixtures).
+The fixture gates fail on any miss and on a false-alarm rate above 20%; see
+[Fixtures](CONTRIBUTING.md#fixtures).
 
 Scoring is pinned by labelled agent sessions in `testdata/fixtures/`; each one
 is a tiny repository, a transcript, and a human's verdict for every hunk.

@@ -25,9 +25,6 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test -short ./...
-        env:
-          # Recall wins over the false-alarm ceiling; see CONTRIBUTING.md#fixtures.
-          UNASKED_RELAX_CEILING: '1'
 
   build:
     needs: test

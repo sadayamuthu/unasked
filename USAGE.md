@@ -562,9 +562,9 @@ hook config files (`hook install`, `hook uninstall`).
   with an unrelated hunk can invite it (never a deletion, test or dependency
   change), and a terse prompt can leave real work `unclear`. `--strict` and
   `--lenient` shift the thresholds.
-- On the labelled fixture set, about one listed hunk in five is one a human
-  would call invited (see [CONTRIBUTING](CONTRIBUTING.md#fixtures)). The set
-  is small and synthetic so far.
+- On the labelled fixture set, 2 of 17 listed hunks (11.8%) are ones a
+  human would call invited (see [CONTRIBUTING](CONTRIBUTING.md#fixtures)).
+  The set is small and synthetic so far.
 - Prompts are English-only for stemming and tells.
 - Symbol extraction uses Go's parser for Go and patterns for other languages;
   struct fields aren't tracked as symbols yet.

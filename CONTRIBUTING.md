@@ -76,8 +76,8 @@ Before pushing, run what CI runs:
 gofmt -l .                # must print nothing
 go vet ./...
 go mod tidy && git diff --exit-code go.mod go.sum
-UNASKED_RELAX_CEILING=1 go test ./...      # full suite, incl. the 5,000-file perf test
-UNASKED_RELAX_CEILING=1 go test -race -short ./...
+go test ./...             # full suite, incl. the 5,000-file perf test
+go test -race -short ./...
 for t in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
   CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/unasked
 done
@@ -133,9 +133,10 @@ rate is **11.8%** (2 of 17 listed hunks), under the target. Both false alarms
 are router hunks in `claude-code/rate-limit-realistic`, whose prompt shares
 few words with them. High-risk hunks are never reported `invited`, so one
 labelled `invited` (a deletion the prompt asked for) is at best `unclear`
-and counts as a false alarm; no case has one yet. When the two gates
-conflict, recall wins, so CI still runs with `UNASKED_RELAX_CEILING=1`, which fails on any miss and prints the
-measured rate. Seven synthetic cases are not much evidence, which is why real
+and counts as a false alarm; no case has one yet. CI enforces both gates.
+Should they ever conflict, recall wins: `UNASKED_RELAX_CEILING=1` lets a
+local run fail on misses only and print the measured rate, which must then be
+published. Seven synthetic cases are not much evidence, which is why real
 sessions are the most useful contribution.
 
 ```sh
