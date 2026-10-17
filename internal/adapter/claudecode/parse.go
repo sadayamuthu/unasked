@@ -34,6 +34,8 @@ type block struct {
 	Input json.RawMessage `json:"input"`
 }
 
+var editTools = map[string]bool{"Edit": true, "MultiEdit": true, "Write": true, "NotebookEdit": true, "Bash": true}
+
 var skipPrefixes = []string{"<command-", "<local-command", "<system-reminder>", "[unasked report]"}
 
 // state accumulates one session: the main file first, then its subagents.
@@ -117,6 +119,9 @@ func (st *state) line(line []byte, sub bool, pending *strings.Builder) {
 			}
 			pending.WriteString(b.Text)
 		case "tool_use":
+			if !editTools[b.Name] {
+				continue // read-only tools keep the pending statement
+			}
 			statement := adapter.LastSentences(pending.String(), 3)
 			pending.Reset()
 			if ev, ok := st.edit(b, rec.Cwd, statement); ok {
@@ -215,7 +220,7 @@ func (st *state) edit(b block, cwd, statement string) (model.EditEvent, bool) {
 			return ev, false
 		}
 		ev.Command = in.Command
-		ev.Mechanical = statement != "" && adapter.IsMechanical(in.Command)
+		ev.Mechanical = adapter.IsMechanical(in.Command)
 		return ev, true
 	}
 	if ev.File == "" {

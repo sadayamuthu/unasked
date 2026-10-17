@@ -133,12 +133,35 @@ func TestStatementLastThreeSentences(t *testing.T) {
 	}
 }
 
-func TestEmptyStatementNotMechanical(t *testing.T) {
+func TestStatementSurvivesReadOnlyTools(t *testing.T) {
+	cwd := t.TempDir()
+	w := func(text string) string {
+		return line("assistant", cwd, `"message":{"content":[{"type":"text","text":"`+text+`"}]}`)
+	}
+	tool := func(name, input string) string {
+		return line("assistant", cwd, `"message":{"content":[{"type":"tool_use","name":"`+name+`","input":`+input+`}]}`)
+	}
+	in := strings.Join([]string{
+		userLine(cwd, `"go"`),
+		w("I will remove the header."),
+		tool("Read", `{"file_path":"a.go"}`),
+		tool("Write", `{"file_path":"a.go","content":"1"}`),
+		w("Now text two."),
+		tool("Grep", `{"pattern":"x"}`),
+		tool("Write", `{"file_path":"b.go","content":"2"}`),
+	}, "\n") + "\n"
+	tr, _ := capture(t, in)
+	if len(tr.Edits) != 2 || tr.Edits[0].Statement != "I will remove the header." || tr.Edits[1].Statement != "Now text two." {
+		t.Fatalf("edits = %+v", tr.Edits)
+	}
+}
+
+func TestBashMechanicalRegardlessOfStatement(t *testing.T) {
 	cwd := t.TempDir()
 	in := userLine(cwd, `"go"`) + "\n" +
 		line("assistant", cwd, `"message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"gofmt -w ."}}]}`) + "\n"
 	tr, _ := capture(t, in)
-	if len(tr.Edits) != 1 || tr.Edits[0].Mechanical || tr.Edits[0].Statement != "" || tr.Edits[0].Command != "gofmt -w ." {
+	if len(tr.Edits) != 1 || !tr.Edits[0].Mechanical || tr.Edits[0].Statement != "" || tr.Edits[0].Command != "gofmt -w ." {
 		t.Fatalf("edits = %+v", tr.Edits)
 	}
 }
