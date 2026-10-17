@@ -123,13 +123,22 @@ func TestAddLoadReplace(t *testing.T) {
 	if main.Reason != "two" || main.By != ByAgent || !main.At.Equal(at) {
 		t.Errorf("main = %+v", main)
 	}
-	dir, _ := r.UnaskedDir()
-	ents, _ := os.ReadDir(dir)
+	dir, err := r.UnaskedDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(ents) != 1 {
 		t.Errorf("leftover files: %v", ents)
 	}
 	if runtime.GOOS != "windows" {
-		fi, _ := os.Stat(filepath.Join(dir, "keep.json"))
+		fi, err := os.Stat(filepath.Join(dir, "keep.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if fi.Mode().Perm() != 0o600 {
 			t.Errorf("mode = %v", fi.Mode().Perm())
 		}
@@ -138,10 +147,51 @@ func TestAddLoadReplace(t *testing.T) {
 
 func TestLoadCorrupt(t *testing.T) {
 	g := gittest.New(t)
-	r, _ := gitx.Open(g.Dir)
-	dir, _ := r.UnaskedDir()
-	os.WriteFile(filepath.Join(dir, "keep.json"), []byte("{nope"), 0o600)
+	r, err := gitx.Open(g.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := r.UnaskedDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keep.json"), []byte("{nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Load(r); err == nil {
+		t.Error("want error")
+	}
+}
+
+func TestUnknownAuthorFailsClosed(t *testing.T) {
+	for _, by := range []By{"", "bogus", "User"} {
+		s := []model.Scored{sc("a", model.VerdictUnasked)}
+		kept, out := Merge(s, []Entry{{Hash: "a", Branch: "main", By: by, Reason: "x"}}, "main")
+		if len(kept) != 1 || len(out) != 1 || out[0].Verdict != model.VerdictUnclear {
+			t.Errorf("by %q: kept=%v out=%v", by, kept, out)
+		}
+	}
+}
+
+func TestAgentWinsOverUserDuplicate(t *testing.T) {
+	for _, es := range [][]Entry{
+		{{Hash: "a", Branch: "main", By: ByUser}, {Hash: "a", Branch: "main", By: ByAgent, Reason: "x"}},
+		{{Hash: "a", Branch: "main", By: ByAgent, Reason: "x"}, {Hash: "a", Branch: "main", By: ByUser}},
+	} {
+		_, out := Merge([]model.Scored{sc("a", model.VerdictUnasked)}, es, "main")
+		if len(out) != 1 {
+			t.Errorf("hunk dropped: %v", out)
+		}
+	}
+}
+
+func TestAddRejectsBadAuthor(t *testing.T) {
+	g := gittest.New(t)
+	r, err := gitx.Open(g.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(r, Entry{Hash: "a", Branch: "main", By: "bogus"}); err == nil {
 		t.Error("want error")
 	}
 }

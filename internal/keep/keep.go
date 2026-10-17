@@ -87,6 +87,9 @@ func Add(r *gitx.Repo, e Entry) error {
 	if err != nil {
 		return err
 	}
+	if e.By != ByUser && e.By != ByAgent {
+		return fmt.Errorf("invalid keep author %q", e.By)
+	}
 	out := make([]Entry, 0, len(es)+1)
 	for _, x := range es {
 		if x.Hash != e.Hash || x.Branch != e.Branch {
@@ -139,9 +142,15 @@ func writeAtomic(path string, b []byte) error {
 func Merge(s []model.Scored, entries []Entry, branch string) (kept []Entry, out []model.Scored) {
 	by := map[string]Entry{}
 	for _, e := range entries {
-		if e.Branch == branch {
-			by[e.Hash] = e
+		if e.Branch != branch {
+			continue
 		}
+		// Anything that is not a user keep counts as an agent keep, and an
+		// agent keep wins over a user keep for the same hunk.
+		if old, ok := by[e.Hash]; ok && old.By != ByUser {
+			continue
+		}
+		by[e.Hash] = e
 	}
 	for _, h := range s {
 		e, ok := by[h.Hunk.Hash]
@@ -150,10 +159,10 @@ func Merge(s []model.Scored, entries []Entry, branch string) (kept []Entry, out 
 			continue
 		}
 		kept = append(kept, e)
-		if e.By != ByAgent {
+		if e.By == ByUser {
 			continue
 		}
-		if h.Verdict == model.VerdictUnasked {
+		if h.Verdict != model.VerdictInvited && h.Verdict != model.VerdictUnclear {
 			h.Verdict = model.VerdictUnclear
 		}
 		h.Reason = "kept by agent: " + e.Reason
