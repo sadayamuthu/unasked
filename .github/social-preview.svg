@@ -18,8 +18,9 @@
     <text x="72" y="392">result: <tspan fill="#f38ba8">unasked</tspan></text>
     <text x="72" y="434" fill="#f38ba8" font-weight="700">UNASKED</text>
     <text x="72" y="462">  h01  internal/api/headers.go:7-7   <tspan fill="#f9e2af">deletion</tspan>  <tspan fill="#f38ba8">⚠</tspan> deleted header X-Request-Id still referenced in 2 files</text>
-    <text x="72" y="490" fill-opacity="0.75">        agent said: "I'm removing the deprecated X-Request-Id header from responses; it is not needed anymore."</text>
-    <text x="72" y="546"><tspan fill="#a6e3a1">$</tspan> unasked --drop h01</text>
-    <text x="72" y="576" fill="#a6e3a1">dropped h01 (snapshot 20261017T050604.050606000Z; undo with: unasked undo)</text>
+    <text x="72" y="490" fill-opacity="0.75">        asked: generic overlap only</text>
+    <text x="72" y="518" fill-opacity="0.75">        agent said: "I'm removing the deprecated X-Request-Id header from responses; it is not needed anymore."</text>
+    <text x="72" y="560"><tspan fill="#a6e3a1">$</tspan> unasked --drop h01</text>
+    <text x="72" y="590" fill="#a6e3a1">dropped h01 (snapshot 20261017T050604.050606000Z; undo with: unasked undo)</text>
   </g>
 </svg>

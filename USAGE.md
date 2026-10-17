@@ -180,6 +180,7 @@ result: unasked
 
 UNASKED
   h01  internal/api/headers.go:7-7   deletion  ⚠ deleted header X-Request-Id still referenced in 2 files
+        asked: generic overlap only
         agent said: "I'm removing the deprecated X-Request-Id header from responses; it is not needed anymore."
 
 unasked --drop h01   revert the unasked hunks
