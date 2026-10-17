@@ -117,3 +117,20 @@ func TestAlignPartialLineEdit(t *testing.T) {
 		}
 	}
 }
+
+// TestAlignFragmentAlreadyPresent (C4): a one-line fragment edit covers a
+// line only when the hunk introduced the fragment. An Edit whose After is
+// "retryLimit" must not align to an unrelated hunk (made by a shell command
+// or formatter) whose removed line already held retryLimit, while the
+// edit's own hunk in the same file still aligns.
+func TestAlignFragmentAlreadyPresent(t *testing.T) {
+	ev := model.EditEvent{Turn: 1, File: "a.go", After: "retryLimit", Statement: "renamed the limit"}
+	own := model.Hunk{File: "a.go", Removed: []string{"const maxRetries = 3"}, Added: []string{"const retryLimit = 3"}}
+	if got := Align(own, []model.EditEvent{ev}); got == nil {
+		t.Error("the edit's own hunk did not align")
+	}
+	bash := model.Hunk{File: "a.go", Removed: []string{"\tif n > retryLimit {"}, Added: []string{"\tif n > retryLimit*2 {"}}
+	if got := Align(bash, []model.EditEvent{ev}); got != nil {
+		t.Errorf("shell-made hunk aligned to the fragment edit: %+v", got)
+	}
+}

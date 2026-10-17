@@ -66,7 +66,7 @@ func Align(h model.Hunk, edits []model.EditEvent) *model.EditEvent {
 		}
 	}
 	for _, i := range order {
-		if covers(edits[i].After, h.Added) {
+		if covers(edits[i].After, h.Added, h.Removed) {
 			return &edits[i]
 		}
 	}
@@ -75,12 +75,15 @@ func Align(h model.Hunk, edits []model.EditEvent) *model.EditEvent {
 
 // covers reports whether an edit's After text, read as a substring of the
 // new file, accounts for every non-blank added line. Lines are compared
-// trimmed. A one-line After covers a line containing it; otherwise a line is
+// trimmed. A one-line After covers a line containing it, provided no
+// removed line of the hunk already held it (C4: the hunk must have
+// introduced the fragment, or any later change on a line that mentions it,
+// say by a shell command, would align to the edit); otherwise a line is
 // covered when it equals an After line, ends with the first After line (the
 // edit began mid-line) or starts with the last (it ended mid-line). A
 // fragment match needs a content token, and so does at least one covered
 // line, so "}" or ")" alone aligns nothing.
-func covers(after string, added []string) bool {
+func covers(after string, added, removed []string) bool {
 	var ev []string
 	for _, l := range strings.Split(normalizeEOL(after), "\n") {
 		ev = append(ev, strings.TrimSpace(l))
@@ -100,6 +103,13 @@ func covers(after string, added []string) bool {
 		whole[l] = true
 	}
 	frag := func(f string) bool { return f != "" && len(Tokens(f)) > 0 }
+	if len(ev) == 1 {
+		for _, l := range removed {
+			if strings.Contains(l, first) {
+				return false
+			}
+		}
+	}
 	content := false
 	for _, l := range added {
 		l = strings.TrimSpace(l)
