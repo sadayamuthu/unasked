@@ -401,3 +401,31 @@ func TestControlCharactersStripped(t *testing.T) {
 		t.Errorf("color output has %d escapes, want 2 (the tell underline):\n%q", n, txt.String())
 	}
 }
+
+// m9: every count reads in the singular when it is one.
+func TestSingularCounts(t *testing.T) {
+	sel, _, _ := fixture()
+	sel.Binary = 1
+	inv := sc("h01", "a.go", 1, 1, model.VerdictUnasked, model.LabelRefactor, model.SeverityWarning)
+	col := sc("h02", "b.go", 1, 1, model.VerdictInvited, model.LabelCollateral, model.SeverityInfo)
+	col.Reason = "collateral"
+	r := Build(sel, []model.Scored{inv, col}, nil)
+	var b bytes.Buffer
+	if err := WriteText(&b, r, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMarkdown(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{"1 hunk changed", "1 hunk in 1 file\n", "1 binary file changed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"1 hunks", "1 files", "file(s)"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("has %q:\n%s", bad, out)
+		}
+	}
+}

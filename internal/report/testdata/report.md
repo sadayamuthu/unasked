@@ -5,7 +5,7 @@ transcript: present · adapter level: full
 
 > warning: pre-existing changes may be included
 
-> warning: 1 binary file(s) changed — not judged
+> warning: 1 binary file changed — not judged
 
 > You asked: "Add rate limiting to the public API: 60/min anon, 600/min keyed, 429 + Retry-After, limits configurable via env."
 

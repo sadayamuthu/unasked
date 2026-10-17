@@ -77,7 +77,7 @@ func (r *Report) collateralLine() string {
 	for _, h := range hs {
 		files[h.File] = true
 	}
-	return fmt.Sprintf("  %d hunks in %d files", len(hs), len(files))
+	return "  " + count(len(hs), "hunk") + " in " + count(len(files), "file")
 }
 
 // WriteText writes the human report. all adds the INVITED section; color

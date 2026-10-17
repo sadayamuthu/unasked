@@ -187,7 +187,7 @@ func Build(sel *adapter.Selection, scored []model.Scored, kept []keep.Entry) *Re
 		r.Warnings = append(r.Warnings, "no transcript: hunks could not be checked against your prompts")
 	}
 	if r.Stats.Binary > 0 {
-		r.Warnings = append(r.Warnings, fmt.Sprintf("%d binary file(s) changed — not judged", r.Stats.Binary))
+		r.Warnings = append(r.Warnings, count(r.Stats.Binary, "binary file")+" changed — not judged")
 		if r.Result == ResultClean {
 			r.Result = ResultUnclear
 		}
@@ -259,8 +259,8 @@ func (r *Report) collateralHunks() []HunkJSON {
 }
 
 func (r *Report) countsLine() string {
-	s := fmt.Sprintf("%d hunks changed · %d invited · %d unasked · %d unclear",
-		r.Stats.Hunks, r.Stats.Invited, r.Stats.Unasked, r.Stats.Unclear)
+	s := fmt.Sprintf("%s changed · %d invited · %d unasked · %d unclear",
+		count(r.Stats.Hunks, "hunk"), r.Stats.Invited, r.Stats.Unasked, r.Stats.Unclear)
 	if r.Stats.Binary > 0 {
 		s += fmt.Sprintf(" · %d binary", r.Stats.Binary)
 	}
@@ -272,11 +272,7 @@ func (r *Report) sessionLine() string {
 	if r.Agent != "" {
 		parts = append(parts, r.Agent)
 	}
-	turns := fmt.Sprintf("%d turns", r.Turns)
-	if r.Turns == 1 {
-		turns = "1 turn"
-	}
-	parts = append(parts, turns)
+	parts = append(parts, count(r.Turns, "turn"))
 	if r.Duration != "" {
 		parts = append(parts, r.Duration)
 	}
@@ -341,6 +337,14 @@ func (h HunkJSON) blurb() string {
 		s = "⚠ " + s
 	}
 	return s
+}
+
+// count writes n and noun, with an "s" unless n is 1.
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // oneLine strips control characters (see clean) and collapses all

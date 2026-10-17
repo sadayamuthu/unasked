@@ -329,3 +329,11 @@ func TestTerms(t *testing.T) {
 		}
 	}
 }
+
+// m9: a deletion referenced from one other file says "1 file".
+func TestSummarySingularXRefs(t *testing.T) {
+	s := model.Scored{Label: model.LabelDeletion, XRefs: 1, Hunk: model.Hunk{File: "a.go", DeletedFile: true}}
+	if got := Summary(s); got != "deleted file a.go still referenced in 1 file" {
+		t.Errorf("Summary = %q", got)
+	}
+}

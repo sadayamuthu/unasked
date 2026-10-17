@@ -520,7 +520,11 @@ func Summary(s model.Scored) string {
 		}
 		out := fmt.Sprintf("deleted %s %s", what, name)
 		if s.XRefs > 0 {
-			out += fmt.Sprintf(" still referenced in %d files", s.XRefs)
+			files := "files"
+			if s.XRefs == 1 {
+				files = "file"
+			}
+			out += fmt.Sprintf(" still referenced in %d %s", s.XRefs, files)
 		}
 		return out
 	case model.LabelTest:
