@@ -22,9 +22,19 @@ import (
 
 var errNoReport = errors.New("no report yet: run unasked first")
 
-// loadLast reads last.json; a missing file is (nil, nil).
-func loadLast(r *gitx.Repo) (*report.Report, error) {
-	last, err := report.LoadLast(r)
+// lastFile is the saved report a caller's ids refer to: an agent's (an
+// agent marker in the environment, or stdin not a terminal) is the one its
+// hook or its own runs saved, the developer's last.json (I6).
+func lastFile(stdin io.Reader) string {
+	if keep.DetectBy(getenv, stdinIsTTY(stdin)) == keep.ByAgent {
+		return report.LastHookFile
+	}
+	return report.LastFile
+}
+
+// loadLast reads the caller's saved report; a missing file is (nil, nil).
+func loadLast(r *gitx.Repo, stdin io.Reader) (*report.Report, error) {
+	last, err := report.LoadLastFile(r, lastFile(stdin))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -38,7 +48,7 @@ func runKeep(r *gitx.Repo, o *options, stdin io.Reader, stdout io.Writer) (int, 
 	if o.keep == "" {
 		return 0, errors.New("--keep needs a hunk id")
 	}
-	last, err := loadLast(r)
+	last, err := loadLast(r, stdin)
 	if err != nil {
 		return 0, err
 	}
@@ -78,10 +88,11 @@ func runKeep(r *gitx.Repo, o *options, stdin io.Reader, stdout io.Writer) (int, 
 }
 
 // runDrop reverts hunks (--drop) or prints the patch that would (--patch).
-// Ids resolve against last.json; with no ids every unasked hunk of the last
-// report is taken. The drop is verified by rescoring the same range.
-func runDrop(r *gitx.Repo, o *options, stdout io.Writer) (int, error) {
-	last, err := loadLast(r)
+// Ids resolve against the caller's saved report (see lastFile); with no ids
+// every unasked hunk of the last report is taken. The drop is verified by
+// rescoring the same range.
+func runDrop(r *gitx.Repo, o *options, stdin io.Reader, stdout io.Writer) (int, error) {
+	last, err := loadLast(r, stdin)
 	if err != nil {
 		return 0, err
 	}
@@ -124,11 +135,11 @@ func runDrop(r *gitx.Repo, o *options, stdout io.Writer) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// The display ids of last.json no longer match the tree; replace it with
-	// the verified post-drop report. Failing to save loses nothing the drop
-	// did, so it is not an error.
+	// The display ids of the saved report no longer match the tree; replace
+	// it with the verified post-drop report. Failing to save loses nothing
+	// the drop did, so it is not an error.
 	if after != nil {
-		_ = report.SaveLast(r, after)
+		_ = report.SaveLastFile(r, lastFile(stdin), after)
 	}
 	display := map[string]string{}
 	for _, h := range last.Hunks {

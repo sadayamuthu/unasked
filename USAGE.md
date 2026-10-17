@@ -61,7 +61,10 @@ then to `HEAD`, and warns `pre-existing changes may be included`.
 `--since` and `--staged` can't be combined, nor can `--strict` and
 `--lenient`. Flag values can't start with `--`. Each run saves the report as
 `last.json` in the [capture store](#capture-store-and-privacy); the hunk ids
-(`h01`, `h02`…) that `--drop` and `--keep` take refer to that report.
+(`h01`, `h02`…) that `--drop` and `--keep` take refer to that report. The
+agent's hook, and runs by an agent (an agent marker in the environment, or
+stdin not a terminal), use `last-hook.json` instead, so a hook firing in the
+background never renumbers the report you are reading.
 
 ### `--drop [ids…]`
 
@@ -532,7 +535,8 @@ committed:
 | Path | What |
 |------|------|
 | `sessions/<agent>-<session>/` | captured transcript, `meta.json` (start snapshot, agent version) and that session's `report.json` |
-| `last.json` | the last report, for `--drop` and `--keep` ids |
+| `last.json` | your last report, for your `--drop` and `--keep` ids |
+| `last-hook.json` | the last report the hook or an agent run saved, for the agent's ids |
 | `keep.json` | keeps, by content hash and branch |
 | `snapshots/` | drop snapshots for `undo` (last 20) |
 | `hook.log` | hook errors |

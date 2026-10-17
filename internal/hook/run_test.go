@@ -217,10 +217,14 @@ func TestRunStopBlocksOnUnasked(t *testing.T) {
 	if err := json.Unmarshal(readFile(t, filepath.Join(dir, "report.json")), &rep); err != nil || rep.Result != report.ResultUnasked || rep.Session != "s1" {
 		t.Errorf("report.json result %q session %q err %v", rep.Result, rep.Session, err)
 	}
-	// The agent's `unasked --drop <ids>` resolves against last.json.
-	last, err := report.LoadLast(s.repo())
+	// The agent's `unasked --drop <ids>` resolves against last-hook.json;
+	// the hook never overwrites the developer's last.json (I6).
+	last, err := report.LoadLastFile(s.repo(), report.LastHookFile)
 	if err != nil || last.Result != report.ResultUnasked {
-		t.Errorf("last.json: %v", err)
+		t.Errorf("last-hook.json: %v", err)
+	}
+	if _, err := report.LoadLast(s.repo()); !os.IsNotExist(err) {
+		t.Errorf("hook wrote last.json: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "transcript.jsonl")); err != nil {
 		t.Error("transcript not captured")

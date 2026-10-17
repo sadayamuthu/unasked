@@ -145,14 +145,14 @@ func runMain(args []string, dir string, stdin io.Reader, stdout io.Writer) (int,
 	case o.keepSet:
 		return runKeep(r, o, stdin, stdout)
 	case o.drop || o.patch:
-		return runDrop(r, o, stdout)
+		return runDrop(r, o, stdin, stdout)
 	}
 	th, _ := o.thresholds()
 	rep, _, _, err := pipeline.Run(r, o.req, th)
 	if err != nil {
 		return 0, err
 	}
-	if err := report.SaveLast(r, rep); err != nil {
+	if err := report.SaveLastFile(r, lastFile(stdin), rep); err != nil {
 		return 0, fmt.Errorf("save last report: %w", err)
 	}
 	switch o.format {

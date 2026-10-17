@@ -173,8 +173,9 @@ func (c *call) stop(s Spec, p Payload, dir string, stdout, stderr io.Writer) (in
 	} else if err := atomicWrite(filepath.Join(dir, "report.json"), buf.Bytes(), 0o600); err != nil {
 		errs = append(errs, err)
 	}
-	// The agent's `unasked --drop <ids>` resolves ids against last.json.
-	if err := report.SaveLast(r, rep); err != nil {
+	// The agent's `unasked --drop <ids>` resolves ids against
+	// last-hook.json; the developer's last.json is never overwritten here.
+	if err := report.SaveLastFile(r, report.LastHookFile, rep); err != nil {
 		errs = append(errs, err)
 	}
 	code := s.Respond(stdout, rep, feedback)

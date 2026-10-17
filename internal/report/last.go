@@ -10,24 +10,38 @@ import (
 	"github.com/sadayamuthu/unasked/internal/gitx"
 )
 
-const lastFile = "last.json"
+// LastFile holds the report the developer last ran; LastHookFile the one an
+// agent's hook or an agent's own run last saved. Each caller resolves ids
+// against its own, so a background hook cannot renumber the developer's
+// report (I6).
+const (
+	LastFile     = "last.json"
+	LastHookFile = "last-hook.json"
+)
 
 var hashRe = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
-func lastPath(g *gitx.Repo) string { return filepath.Join(g.GitDir, "unasked", lastFile) }
+func lastPath(g *gitx.Repo, name string) string { return filepath.Join(g.GitDir, "unasked", name) }
 
-// SaveLast writes the report to <git-dir>/unasked/last.json atomically, mode 0600.
-func SaveLast(g *gitx.Repo, r *Report) error {
+// SaveLast writes the report to <git-dir>/unasked/last.json.
+func SaveLast(g *gitx.Repo, r *Report) error { return SaveLastFile(g, LastFile, r) }
+
+// LoadLast reads the report saved by SaveLast.
+func LoadLast(g *gitx.Repo) (*Report, error) { return LoadLastFile(g, LastFile) }
+
+// SaveLastFile writes the report to <git-dir>/unasked/<name> atomically,
+// mode 0600.
+func SaveLastFile(g *gitx.Repo, name string, r *Report) error {
 	dir, err := g.UnaskedDir()
 	if err != nil {
 		return err
 	}
-	path := lastPath(g)
+	path := lastPath(g, name)
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, lastFile+".tmp*")
+	tmp, err := os.CreateTemp(dir, name+".tmp*")
 	if err != nil {
 		return err
 	}
@@ -53,15 +67,15 @@ func SaveLast(g *gitx.Repo, r *Report) error {
 	return nil
 }
 
-// LoadLast reads the report saved by SaveLast.
-func LoadLast(g *gitx.Repo) (*Report, error) {
-	b, err := os.ReadFile(lastPath(g))
+// LoadLastFile reads the report saved by SaveLastFile under name.
+func LoadLastFile(g *gitx.Repo, name string) (*Report, error) {
+	b, err := os.ReadFile(lastPath(g, name))
 	if err != nil {
 		return nil, err
 	}
 	var r Report
 	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, fmt.Errorf("%s: %w", lastFile, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	return &r, nil
 }

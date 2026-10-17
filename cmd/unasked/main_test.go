@@ -653,3 +653,39 @@ func TestDropFileLevelRenameThenUndo(t *testing.T) {
 		t.Errorf("run.sh mode after undo: %v %v", st.Mode(), err)
 	}
 }
+
+// TestDropIDsResolveAgainstOwnReport is the I6 race: a background Stop hook
+// saves its report while the developer reads theirs. The developer's ids
+// resolve against last.json, the agent's against last-hook.json, so
+// `--drop h01` always means the hunk its caller saw as h01.
+func TestDropIDsResolveAgainstOwnReport(t *testing.T) {
+	c := setup(t, false)
+	user := jsonReport(t, c.want(2, "--format", "json"))
+	colors := hunkID(t, user, "colors.txt")
+	r, err := gitx.Open(c.g.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The hook's report numbers the same hunks the other way round.
+	hook := *user
+	hook.Hunks = append([]report.HunkJSON(nil), user.Hunks...)
+	hook.Hunks[0].ID, hook.Hunks[1].ID = hook.Hunks[1].ID, hook.Hunks[0].ID
+	if err := report.SaveLastFile(r, report.LastHookFile, &hook); err != nil {
+		t.Fatal(err)
+	}
+	fetch := c.g.Read("fetch.go")
+	c.want(0, "--patch", colors) // resolves against last.json: the colors hunk
+	if out := c.want(0, "--patch", colors); !strings.Contains(out, "+green") {
+		t.Errorf("user --patch %s:\n%s", colors, out)
+	}
+	agentID := hunkID(t, &hook, "colors.txt")
+	c.env["CLAUDECODE"] = "1"
+	if out := c.want(0, "--patch", agentID); !strings.Contains(out, "+green") {
+		t.Errorf("agent --patch %s:\n%s", agentID, out)
+	}
+	delete(c.env, "CLAUDECODE")
+	c.want(0, "--drop", colors)
+	if c.g.Read("colors.txt") != "red\ngreen\nblue\n" || c.g.Read("fetch.go") != fetch {
+		t.Errorf("user drop of %s took the wrong hunk", colors)
+	}
+}

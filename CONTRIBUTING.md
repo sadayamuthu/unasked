@@ -164,7 +164,7 @@ not after it. Review every `expected.json` diff that `-update` produces.
 | `internal/label` | Labels, high-risk, severity, summaries, cross-references for deletions, collateral folding |
 | `internal/keep` | `keep.json`: keeps by content hash and branch, agent-keep rules |
 | `internal/pipeline` | Runs the whole report: select, diff, score, label, keep |
-| `internal/report` | The JSON v1 report and the text and markdown views; `last.json` |
+| `internal/report` | The JSON v1 report and the text and markdown views; `last.json` and `last-hook.json` |
 | `internal/revert` | `--drop` checks, snapshot, apply, verify and `undo` |
 | `internal/hook` | Per-agent hook installers and `hook run` |
 | `internal/model` | Types shared across packages, exit codes |
