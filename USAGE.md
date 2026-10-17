@@ -155,10 +155,10 @@ unasked v0.1.0 (git 2.50.1)
 The text report, from the [demo](README.md):
 
 ```
-Session demo-session (claude-code, 1 turns, 1 min)
+Session demo-session (claude-code, 1 turn, 1 min)
 transcript: present · adapter level: full
-You asked: "Add rate limiting to the public API: 60/min per client, 429 +
-           Retry-After."
+You asked: "Add rate limiting to the public API: 60 requests per minute per client,
+           answer 429 with a Retry-After header"
 
 4 hunks changed · 3 invited · 1 unasked · 0 unclear
 result: unasked
@@ -194,7 +194,14 @@ compares what the agent said before the edit with your prompts. A hunk is
 `invited` when either test scores at least the invite threshold, `unclear`
 when the better score is at least the low threshold, and `unasked` otherwise.
 High-risk hunks are stricter: only Test 1, your own words, can invite them,
-and if it doesn't they are `unasked`. When there is no transcript or no
+and if it doesn't they are `unasked`. Shared words alone aren't enough: one
+prompt must name the change specifically. For a deletion, that means every
+word of a removed name (`remove the X-Request-Id header`), or a removal verb
+plus one of its rarer words; for a test or CI change, a word like `test`,
+`assert`, `CI` or `coverage`; for a dependency change, a word like `bump`,
+`upgrade` or `dependency`, or the dependency's name. Otherwise the hunk is
+`unasked` with reason `asked: generic overlap only`, while `asked` still shows
+the raw score. When there is no transcript or no
 usable prompt, high-risk hunks are `unasked` and everything else is
 `unclear`.
 
@@ -213,9 +220,9 @@ removed.
   "transcript": "present",
   "adapter": { "name": "claude-code", "version": "2.1.289", "level": "full", "degraded_reason": "" },
   "range": { "base": "466c4ce4…", "head": "ddd8a87c…", "base_source": "captured" },
-  "thresholds": { "invite": 0.35, "low": 0.2 },
+  "thresholds": { "invite": 0.2, "low": 0.15 },
   "prompts": [
-    { "turn": 1, "text": "Add rate limiting to the public API: 60/min per client, 429 + Retry-After." }
+    { "turn": 1, "text": "Add rate limiting to the public API: 60 requests per minute per client, answer 429 with a Retry-After header" }
   ],
   "result": "unasked",
   "hunks": [
@@ -226,15 +233,15 @@ removed.
       "verdict": "unasked",
       "label": "deletion",
       "severity": "error",
-      "asked": 0.127,
-      "said": 0,
+      "asked": 0.44,
+      "said": 0.149,
       "tell": null,
       "statement": "I'm removing the deprecated X-Request-Id header from responses; it is not needed anymore.",
       "turn": 1,
       "removed_symbols": ["X-Request-Id"],
       "references_elsewhere": 2,
       "summary": "deleted header X-Request-Id still referenced in 2 files",
-      "reason": "no match",
+      "reason": "asked: generic overlap only",
       "hash": "3f2bbfe91eb9",
       "high_risk": true
     }
@@ -262,7 +269,8 @@ Key fields:
   **`tell`** is the tell phrase found in `statement`, or `null`.
 - **`hunks[].reason`**: why it got its verdict, for example `asked: turn 1`,
   `agent said: turn 2`, `required by h03`, `collateral`, `weak match`,
-  `no match`, `no agent edit found` or `no usable prompt`.
+  `no match`, `asked: generic overlap only`, `no agent edit found` or
+  `no usable prompt`.
 - **`hunks[].hash`**: the hunk's identity: the first 12 hex digits of
   SHA-256 over its path, removed lines and added lines. Ids like `h01` are
   per-run display labels; `--drop` and `--keep` check hashes.
@@ -307,7 +315,7 @@ the report back to the agent as its next instruction:
 
 ```
 [unasked report]
-Session demo-session (claude-code, 1 turns, 1 min)
+Session demo-session (claude-code, 1 turn, 1 min)
 ...
 UNASKED
   h01  internal/api/headers.go:7-7   deletion  ⚠ deleted header X-Request-Id still referenced in 2 files
