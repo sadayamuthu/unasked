@@ -352,11 +352,17 @@ the file's mode are kept, the original is backed up once as
 removes only unasked's entries. Codex runs a new or changed hook only after
 you trust it: open `/hooks` in Codex once after installing.
 
-**At session start** (and on each new prompt) the hook records a snapshot of
-the working tree, the base the report diffs against. **When the agent
-stops**, it copies the transcript into the [capture store](#capture-store-and-privacy)
-and runs the report. If the result is `unasked`, it blocks the stop and hands
-the report back to the agent as its next instruction:
+**At session start** the hook records a snapshot of the working tree, the
+base the report diffs against. Only the first start event records it (the
+first prompt does, if the session-start hook did not run); later prompts
+keep that baseline, so work you had before the session is never judged as
+the agent's. **When the agent stops**, it copies the transcript into the
+[capture store](#capture-store-and-privacy) and runs the report against that
+baseline, even for a turn that made no edit. If the result is `unasked` and
+at least one unasked hunk is one of the agent's own edit tool calls, it
+blocks the stop and hands the report back to the agent as its next
+instruction (a report with no transcript, a degraded one, or only hunks no
+edit tool call explains is saved but never fed back):
 
 ```
 [unasked report]
