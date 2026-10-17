@@ -1,0 +1,3 @@
+# Golden files are byte-exact expected output: no checkout may convert line
+# endings.
+* -text
