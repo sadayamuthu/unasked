@@ -56,6 +56,7 @@ type Session struct {
 	Agent, ID, Path, Cwd string
 	Start, End           time.Time
 	Captured             bool
+	Meta                 *Meta // set for captured sessions
 }
 
 // Adapter reads one agent's session transcripts.
