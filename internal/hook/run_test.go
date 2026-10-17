@@ -287,6 +287,33 @@ func TestRunCapsAtThree(t *testing.T) {
 	}
 }
 
+func TestRunNewPromptResetsCap(t *testing.T) {
+	s := started(t)
+	s.askedEdit()
+	s.unaskedEdit()
+	for i := 1; i <= 3; i++ {
+		if _, out, _ := s.run("claude-code", s.payload("Stop", false)); out == "" {
+			t.Fatalf("stop %d: not blocked", i)
+		}
+	}
+	if _, out, _ := s.run("claude-code", s.payload("Stop", false)); out != "" {
+		t.Fatalf("4th stop blocked: %q", out)
+	}
+	if code, out, _ := s.run("claude-code", s.payload("UserPromptSubmit", false)); code != 0 || out != "" {
+		t.Fatalf("prompt: exit %d stdout %q", code, out)
+	}
+	if m := s.meta(); m.Feedbacks != 0 {
+		t.Fatalf("feedbacks %d after a new prompt, want 0", m.Feedbacks)
+	}
+	_, out, _ := s.run("claude-code", s.payload("Stop", false))
+	if d, _ := decode(t, out); d != "block" {
+		t.Fatal("stop after a new prompt not blocked")
+	}
+	if m := s.meta(); m.Feedbacks != 1 {
+		t.Errorf("feedbacks %d, want 1", m.Feedbacks)
+	}
+}
+
 func TestRunCodexStartAndRespond(t *testing.T) {
 	s := newSession(t)
 	code, out, _ := s.run("codex", s.payload("SessionStart", false))

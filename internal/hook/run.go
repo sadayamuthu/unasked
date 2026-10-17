@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	// maxFeedbacks caps consecutive feedbacks per session (§8 loop safety).
+	// maxFeedbacks caps consecutive feedbacks per task (§8 loop safety); the
+	// count resets on a clean stop and on every start event.
 	maxFeedbacks = 3
 	capWarning   = "unasked: 3 consecutive reports ignored; not blocking again this session"
 
@@ -104,8 +105,16 @@ func (c *call) handle(stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	defer unlock()
 	switch p.Event {
 	case "SessionStart", "UserPromptSubmit":
-		_, err := adapter.RecordStart(r, c.agent, p.Session, p.Cwd)
-		return 0, err
+		m, err := adapter.RecordStart(r, c.agent, p.Session, p.Cwd)
+		if err != nil {
+			return 0, err
+		}
+		// A new prompt is a new task: the feedback cap applies per task (R31).
+		if m.Feedbacks != 0 {
+			m.Feedbacks = 0
+			return 0, adapter.SaveMeta(dir, m)
+		}
+		return 0, nil
 	case "Stop":
 		return c.stop(s, p, dir, stdout, stderr)
 	}
