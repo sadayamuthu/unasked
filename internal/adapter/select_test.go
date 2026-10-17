@@ -351,12 +351,13 @@ func TestAllSessionsWidestCapturedRange(t *testing.T) {
 	}
 	g.Write("a.txt", "from session one\n")
 	capture(t, r, "s1", session(g.Dir, now.Add(-2*time.Hour), ev{"p1", "a.txt"}))
-	time.Sleep(10 * time.Millisecond)
+	setTimes(t, r, "s1", now.Add(-3*time.Hour), now.Add(-2*time.Hour))
 	if _, err := adapter.RecordStart(r, "claude-code", "s2", g.Dir); err != nil {
 		t.Fatal(err)
 	}
 	g.Write("b.txt", "from session two\n")
 	capture(t, r, "s2", session(g.Dir, now.Add(-time.Hour), ev{"p2", "b.txt"}))
+	setTimes(t, r, "s2", now.Add(-time.Hour), now.Add(-30*time.Minute))
 
 	one, err := adapter.Select(r, adapter.Request{}, claude())
 	if err != nil {
@@ -374,5 +375,58 @@ func TestAllSessionsWidestCapturedRange(t *testing.T) {
 	}
 	if !hasHunkFor(all, "a.txt") || !hasHunkFor(all, "b.txt") {
 		t.Fatalf("hunks = %+v", all.Hunks)
+	}
+}
+
+// setTimes pins a captured session's baseline and update times so ordering
+// does not depend on the clock.
+func setTimes(t *testing.T, r *gitx.Repo, id string, taken, updated time.Time) {
+	t.Helper()
+	dir, err := adapter.CaptureDir(r, "claude-code", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := adapter.LoadMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Start.Taken, m.Updated = taken, updated
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailedReadSurvivesIntersectingSession(t *testing.T) {
+	g, r := setup(t)
+	now := time.Now()
+	if _, err := adapter.RecordStart(r, "claude-code", "good", g.Dir); err != nil {
+		t.Fatal(err)
+	}
+	g.Write("a.txt", "agent\n")
+	capture(t, r, "good", session(g.Dir, now, ev{"p", "a.txt"}))
+	setTimes(t, r, "good", now.Add(-2*time.Hour), now.Add(-time.Hour))
+	capture(t, r, "bad", "not json at all\n")
+	setTimes(t, r, "bad", now.Add(-time.Hour), now) // newer, examined first
+
+	sel, err := adapter.Select(r, adapter.Request{}, claude())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sel.Sessions) != 1 || sel.Sessions[0].ID != "good" {
+		t.Fatalf("sessions = %+v", sel.Sessions)
+	}
+	if !strings.Contains(sel.Caps.Degraded, "claude-code") {
+		t.Fatalf("Degraded = %q", sel.Caps.Degraded)
+	}
+	found := false
+	for _, w := range sel.Warnings {
+		found = found || strings.HasPrefix(w, "transcript: claude-code")
+	}
+	if !found {
+		t.Fatalf("warnings = %v", sel.Warnings)
 	}
 }

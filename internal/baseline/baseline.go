@@ -30,7 +30,7 @@ type Baseline struct {
 // non-ignored files) as a tree object, using a private temporary index.
 func Snapshot(r *gitx.Repo) (Baseline, error) {
 	return withTempIndex(r, func(env []string) (Baseline, error) {
-		if _, err := r.RunEnv(env, nil, "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "add", "-A", "--", "."); err != nil {
+		if _, err := r.RunEnv(env, nil, "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", "core.fsmonitor=false", "add", "-A", "--", "."); err != nil {
 			return Baseline{}, err
 		}
 		tree, err := writeTree(r, env)
@@ -57,6 +57,46 @@ func IndexTree(r *gitx.Repo) (string, error) {
 		return Baseline{Tree: tree}, err
 	})
 	return b.Tree, err
+}
+
+// clearHidingFlags drops, on the temporary index only, the per-entry flags
+// that make git skip the working tree: assume-unchanged, skip-worktree (only
+// for files that exist, so a sparse checkout's absent files are not read as
+// deletions) and fsmonitor-valid. Otherwise edits to such files are invisible.
+func clearHidingFlags(r *gitx.Repo, env []string) error {
+	out, err := r.RunEnv(env, nil, "-c", "core.fsmonitor=false", "ls-files", "-v", "-z")
+	if err != nil {
+		return err
+	}
+	var assume, skip, fsm []string
+	for _, rec := range strings.Split(string(out), "\x00") {
+		if len(rec) < 3 {
+			continue
+		}
+		tag, path := rec[0], rec[2:]
+		if tag >= 'a' && tag <= 'z' {
+			assume = append(assume, path)
+		}
+		if tag == 'S' || tag == 's' {
+			if _, err := os.Lstat(filepath.Join(r.Dir, filepath.FromSlash(path))); err == nil {
+				skip = append(skip, path)
+			}
+		}
+		fsm = append(fsm, path)
+	}
+	for _, c := range []struct {
+		flag  string
+		paths []string
+	}{{"--no-assume-unchanged", assume}, {"--no-skip-worktree", skip}, {"--no-fsmonitor-valid", fsm}} {
+		if len(c.paths) == 0 {
+			continue
+		}
+		in := strings.NewReader(strings.Join(c.paths, "\x00") + "\x00")
+		if _, err := r.RunEnv(env, in, "-c", "core.fsmonitor=false", "update-index", c.flag, "-z", "--stdin"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeTree(r *gitx.Repo, env []string) (string, error) {
@@ -97,12 +137,20 @@ func withTempIndex(r *gitx.Repo, fn func(env []string) (Baseline, error)) (Basel
 	if !filepath.IsAbs(real) {
 		real = filepath.Join(r.Dir, real)
 	}
+	var realMtime time.Time
 	if src, err := os.Open(real); err == nil {
+		// Stat the open handle so a concurrent index replace cannot pair the
+		// copied bytes with a newer file's mtime.
+		st, serr := src.Stat()
 		_, cerr := io.Copy(f, src)
 		src.Close()
+		if serr != nil {
+			return Baseline{}, serr
+		}
 		if cerr != nil {
 			return Baseline{}, cerr
 		}
+		realMtime = st.ModTime()
 	} else if os.IsNotExist(err) {
 		// An empty file is not a valid index; let git create it.
 		f.Close()
@@ -118,10 +166,14 @@ func withTempIndex(r *gitx.Repo, fn func(env []string) (Baseline, error)) (Basel
 	// Git decides whether an entry is "racy" by comparing file mtimes with the
 	// index file's mtime. The copy must keep the real index's mtime, or an
 	// edit made in the same second as the last index write can be missed.
-	if st, err := os.Stat(real); err == nil {
-		if err := os.Chtimes(tmp, st.ModTime(), st.ModTime()); err != nil {
+	env := []string{"GIT_INDEX_FILE=" + tmp}
+	if !realMtime.IsZero() {
+		if err := os.Chtimes(tmp, realMtime, realMtime); err != nil {
+			return Baseline{}, err
+		}
+		if err := clearHidingFlags(r, env); err != nil {
 			return Baseline{}, err
 		}
 	}
-	return fn([]string{"GIT_INDEX_FILE=" + tmp})
+	return fn(env)
 }

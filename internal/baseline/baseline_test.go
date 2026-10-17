@@ -163,3 +163,83 @@ func TestSnapshotDetachedHead(t *testing.T) {
 		t.Fatalf("commit %s want %s", b.Commit, sha)
 	}
 }
+
+func indexSum(t *testing.T, g *gittest.Repo) [32]byte {
+	t.Helper()
+	b, err := os.ReadFile(g.Dir + "/.git/index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha256.Sum256(b)
+}
+
+func blobAt(g *gittest.Repo, tree, path string) string {
+	return g.Git("cat-file", "-p", g.Git("rev-parse", tree+":"+path))
+}
+
+func TestSnapshotSeesAssumeUnchangedEdit(t *testing.T) {
+	g := gittest.New(t)
+	g.Write("a.txt", "a\n")
+	g.Write("b.txt", "b\n")
+	g.Commit("init")
+	g.Git("update-index", "--assume-unchanged", "a.txt")
+	g.Write("a.txt", "edited\n")
+	g.Write("b.txt", "edited too\n")
+	before := indexSum(t, g)
+	b, err := Snapshot(open(t, g))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blobAt(g, b.Tree, "a.txt"); got != "edited" {
+		t.Fatalf("a.txt in snapshot = %q", got)
+	}
+	if indexSum(t, g) != before {
+		t.Fatal("real index changed")
+	}
+	if !strings.HasPrefix(g.Git("ls-files", "-v", "a.txt"), "h") {
+		t.Fatal("real index lost its assume-unchanged flag")
+	}
+}
+
+func TestSnapshotSeesSkipWorktreeEdit(t *testing.T) {
+	g := gittest.New(t)
+	g.Write("a.txt", "a\n")
+	g.Commit("init")
+	g.Git("update-index", "--skip-worktree", "a.txt")
+	g.Write("a.txt", "edited\n")
+	before := indexSum(t, g)
+	b, err := Snapshot(open(t, g))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blobAt(g, b.Tree, "a.txt"); got != "edited" {
+		t.Fatalf("a.txt in snapshot = %q", got)
+	}
+	if indexSum(t, g) != before {
+		t.Fatal("real index changed")
+	}
+}
+
+func TestSnapshotSparseAbsentNotDeleted(t *testing.T) {
+	g := gittest.New(t)
+	g.Write("a.txt", "a\n")
+	g.Write("b.txt", "b\n")
+	g.Commit("init")
+	g.Git("update-index", "--skip-worktree", "b.txt")
+	g.Remove("b.txt")
+	g.Write("a.txt", "edited\n")
+	before := indexSum(t, g)
+	b, err := Snapshot(open(t, g))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blobAt(g, b.Tree, "b.txt"); got != "b" {
+		t.Fatalf("absent sparse file should be kept, got %q", got)
+	}
+	if got := blobAt(g, b.Tree, "a.txt"); got != "edited" {
+		t.Fatalf("a.txt = %q", got)
+	}
+	if indexSum(t, g) != before {
+		t.Fatal("real index changed")
+	}
+}

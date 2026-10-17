@@ -118,7 +118,8 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 	}
 
 	var hits []*candidate
-	var failed []string
+	failed := map[*candidate]string{}
+	var failedOrder []*candidate
 	for _, c := range cands {
 		c.tr, c.caps = Guarded(c.a, func() (*model.Transcript, Capabilities, error) {
 			if c.s.Captured {
@@ -127,7 +128,8 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 			return c.a.Read(c.s)
 		})
 		if c.caps.Degraded != "" {
-			failed = append(failed, c.caps.Degraded)
+			failed[c] = c.caps.Degraded
+			failedOrder = append(failedOrder, c)
 		}
 		if len(c.tr.Edits) == 0 {
 			continue
@@ -163,8 +165,8 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 			return nil, err
 		}
 		sel.Warnings = append(sel.Warnings, "transcript: none")
-		if len(failed) > 0 {
-			sel.Caps.Degraded = strings.Join(failed, "; ")
+		if notes := failedNotes(failedOrder, failed, nil); len(notes) > 0 {
+			sel.Caps.Degraded = strings.Join(notes, "; ")
 			sel.Warnings = append(sel.Warnings, "transcript: "+sel.Caps.Degraded)
 		}
 		return sel, nil
@@ -200,7 +202,33 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 			sel.Sessions = append(sel.Sessions, hits[i].s)
 		}
 	}
+	// Sessions that failed to read must not vanish just because another
+	// session intersected.
+	if notes := failedNotes(failedOrder, failed, hits); len(notes) > 0 {
+		joined := strings.Join(notes, "; ")
+		sel.Warnings = append(sel.Warnings, "transcript: "+joined)
+		if sel.Caps.Degraded != "" {
+			joined = sel.Caps.Degraded + "; " + joined
+		}
+		sel.Caps.Degraded = joined
+	}
 	return sel, nil
+}
+
+// failedNotes returns the degradation notes of failed candidates that are not
+// among skip, in candidate order.
+func failedNotes(order []*candidate, failed map[*candidate]string, skip []*candidate) []string {
+	var out []string
+next:
+	for _, c := range order {
+		for _, h := range skip {
+			if h == c {
+				continue next
+			}
+		}
+		out = append(out, failed[c])
+	}
+	return out
 }
 
 // candidates lists captured and native sessions for the repo, newest first,
