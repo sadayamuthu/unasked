@@ -514,3 +514,65 @@ func featureName(h model.Hunk) string {
 	}
 	return h.File
 }
+
+// Terms returns the specific names a prompt can mention to ask for a
+// high-risk hunk (R36), for invite.Input.Terms: for a deletion, its removed
+// symbols and literals (for a deleted file, its removed symbols and its file
+// name; for a pure code removal with neither, its enclosing symbol); for a
+// dependency change, the names of the dependencies on its changed lines.
+// Other labels have none.
+func Terms(h model.Hunk) []string {
+	switch classify(h, nil) {
+	case model.LabelDeletion:
+		d := deletionOf(h)
+		if d.file {
+			base := path.Base(strings.ReplaceAll(h.File, "\\", "/"))
+			if i := strings.LastIndex(base, "."); i > 0 {
+				base = base[:i]
+			}
+			return append(append([]string(nil), h.Symbols.Removed...), base)
+		}
+		if len(d.terms) == 0 && h.Symbols.Enclosing != "" {
+			return []string{h.Symbols.Enclosing}
+		}
+		return d.terms
+	case model.LabelDependency:
+		return depNames(append(append([]string(nil), h.Added...), h.Removed...))
+	}
+	return nil
+}
+
+var (
+	depLineRe  = regexp.MustCompile(`^(?:(?:require|replace|exclude)\s+)?["']?(@?[A-Za-z0-9][\w.\-/@]*)`)
+	depMajorRe = regexp.MustCompile(`^v\d+$`)
+	depSkip    = map[string]bool{"require": true, "replace": true, "exclude": true, "module": true, "go": true, "toolchain": true}
+)
+
+// depNames extracts the dependency name each manifest or lock line starts
+// with ("go.uber.org/zap v1.27.0" → "zap", `"@types/node": "^20"` → "node",
+// "requests==2.31" → "requests"): the last path segment that is not a Go
+// major-version suffix, without an npm "@version". Duplicates are dropped.
+func depNames(lines []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range lines {
+		m := depLineRe.FindStringSubmatch(strings.TrimSpace(l))
+		if m == nil || depSkip[m[1]] {
+			continue
+		}
+		name := m[1]
+		if i := strings.LastIndex(name, "@"); i > 0 {
+			name = name[:i]
+		}
+		segs := strings.Split(strings.Trim(name, "/"), "/")
+		for len(segs) > 1 && depMajorRe.MatchString(segs[len(segs)-1]) {
+			segs = segs[:len(segs)-1]
+		}
+		name = segs[len(segs)-1]
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}

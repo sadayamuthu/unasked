@@ -15,8 +15,8 @@
     "base_source": "captured"
   },
   "thresholds": {
-    "invite": 0.35,
-    "low": 0.2
+    "invite": 0.2,
+    "low": 0.15
   },
   "prompts": [
     {
@@ -39,7 +39,7 @@
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "added /healthz",
-      "reason": "agent said: turn 1",
+      "reason": "asked: turn 1",
       "hash": "4db6a4172a87",
       "high_risk": false
     },

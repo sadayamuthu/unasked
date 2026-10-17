@@ -182,8 +182,8 @@ go vet ./...
 gofmt -l .
 ```
 
-`UNASKED_RELAX_CEILING=1` is what CI sets while the measured false-alarm rate
-sits just above the 20% target; see [Fixtures](CONTRIBUTING.md#fixtures).
+`UNASKED_RELAX_CEILING=1` is what CI sets so that recall, not the 20%
+false-alarm target, decides a failing run; see [Fixtures](CONTRIBUTING.md#fixtures).
 
 Scoring is pinned by labelled agent sessions in `testdata/fixtures/`; each one
 is a tiny repository, a transcript, and a human's verdict for every hunk.

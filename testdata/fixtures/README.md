@@ -76,5 +76,5 @@ exposes (with a unit test in that package).
    `-update` to create `expected.json`.
 
 A tool ships above `prompts-only` only with at least 3 real (recorded, not
-synthetic) labelled cases. The six cases here are synthetic, built from each
+synthetic) labelled cases. The seven cases here are synthetic, built from each
 adapter's documented record shapes.

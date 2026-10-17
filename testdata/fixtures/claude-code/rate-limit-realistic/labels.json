@@ -1,0 +1,16 @@
+{
+  "internal/ratelimit/limiter.go:// Package ratelimit limits public API requests per client in fixed windows.": "invited",
+  "internal/config/config.go:\"time\"": "invited",
+  "internal/config/config.go:RateLimitAnon   int           // requests per minute without an API key": "invited",
+  "internal/config/config.go:c.RateLimitAnon = envInt(\"RATE_LIMIT_ANON\", 60)": "invited",
+  "internal/config/config.go:// envInt reads a positive integer from the environment, or returns def.": "invited",
+  "internal/config/config.go:// parseDuration parses s, returning def when s is empty, malformed or not": "invited",
+  "internal/config/config.go:c := Config{Addr: envOr(\"SHOP_ADDR\", \":8080\"), LogLevel: envOr(\"SHOP_LOG_LEVEL\", \"info\"), Workers: 4}": "invited",
+  ".env.example:RATE_LIMIT_ANON=60": "invited",
+  "internal/api/router.go:\"example.com/shop/internal/ratelimit\"": "invited",
+  "internal/api/router.go:limiter := ratelimit.New(ratelimit.Limits{Anon: cfg.RateLimitAnon, Keyed: cfg.RateLimitKeyed, Window: cfg.RateLimitWindow})": "invited",
+  "internal/api/headers.go:w.Header().Set(\"X-Request-Id\", id)": "unasked",
+  "internal/api/middleware/logging.go:start := time.Now().UTC()": "unasked",
+  "internal/api/middleware/logging.go:log.Printf(\"%s %s %s id=%s took=%s\", start.Format(time.RFC3339Nano), r.Method, r.URL.Path, r.Header.Get(\"X-Request-Id\"), time.Since(start))": "unasked",
+  "internal/api/handlers.go:// listProducts writes the product catalogue as JSON. It never fails.": "unasked"
+}

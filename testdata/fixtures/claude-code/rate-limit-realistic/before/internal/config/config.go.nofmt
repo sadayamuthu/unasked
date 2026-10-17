@@ -1,0 +1,29 @@
+package config
+
+import (
+	"os"
+	"strconv"
+)
+
+// Config holds the server settings read from the environment.
+type Config struct {
+	Addr     string
+	LogLevel string
+	Workers  int
+}
+
+// Load reads the configuration from environment variables.
+func Load() Config {
+    c := Config{Addr: envOr("SHOP_ADDR", ":8080"), LogLevel: envOr("SHOP_LOG_LEVEL", "info"), Workers: 4}
+	if n, err := strconv.Atoi(os.Getenv("SHOP_WORKERS")); err == nil && n > 0 {
+		c.Workers = n
+	}
+	return c
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}

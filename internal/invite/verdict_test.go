@@ -40,7 +40,7 @@ func TestVerdictRules(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := c.s
-		decide(&s, 3, ruleTh, c.diffOnly, !c.noTranscript)
+		decide(&s, s.Asked, 3, ruleTh, c.diffOnly, !c.noTranscript)
 		if s.Verdict != c.want {
 			t.Errorf("%s: verdict = %s (%q), want %s", c.name, s.Verdict, s.Reason, c.want)
 		}

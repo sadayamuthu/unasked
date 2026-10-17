@@ -321,3 +321,12 @@ func TestSaveLoadLast(t *testing.T) {
 		t.Fatalf("%v %v", h, err)
 	}
 }
+
+func TestSessionLineTurns(t *testing.T) {
+	for turns, want := range map[int]string{0: "0 turns", 1: "1 turn,", 2: "2 turns"} {
+		r := &Report{Agent: "claude-code", Session: "s", Turns: turns, Duration: "1 min"}
+		if got := r.sessionLine(); !strings.Contains(got, want) {
+			t.Errorf("Turns=%d: %q, want %q", turns, got, want)
+		}
+	}
+}

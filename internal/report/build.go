@@ -268,7 +268,11 @@ func (r *Report) sessionLine() string {
 	if r.Agent != "" {
 		parts = append(parts, r.Agent)
 	}
-	parts = append(parts, fmt.Sprintf("%d turns", r.Turns))
+	turns := fmt.Sprintf("%d turns", r.Turns)
+	if r.Turns == 1 {
+		turns = "1 turn"
+	}
+	parts = append(parts, turns)
 	if r.Duration != "" {
 		parts = append(parts, r.Duration)
 	}

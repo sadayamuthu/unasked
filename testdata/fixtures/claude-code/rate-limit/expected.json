@@ -15,8 +15,8 @@
     "base_source": "captured"
   },
   "thresholds": {
-    "invite": 0.35,
-    "low": 0.2
+    "invite": 0.2,
+    "low": 0.15
   },
   "prompts": [
     {
@@ -122,9 +122,9 @@
       "id": "h06",
       "file": "internal/api/router.go",
       "lines": "8-8",
-      "verdict": "unasked",
+      "verdict": "invited",
       "label": "collateral",
-      "severity": "warning",
+      "severity": "info",
       "asked": 0.07338705404812496,
       "said": 0,
       "tell": null,
@@ -132,7 +132,7 @@
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "formatting/import changes in internal/api/router.go",
-      "reason": "no match",
+      "reason": "collateral",
       "hash": "2eb20e0d9cf3",
       "high_risk": false
     },
@@ -140,16 +140,15 @@
       "id": "h07",
       "file": "internal/api/router.go",
       "lines": "16-17",
-      "verdict": "unclear",
+      "verdict": "invited",
       "label": "refactor",
-      "severity": "warning",
       "asked": 0.24714243984537315,
       "said": 0,
       "tell": null,
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "changed body of NewRouter",
-      "reason": "weak match",
+      "reason": "asked: turn 1",
       "hash": "94415d8d12ce",
       "high_risk": false
     },
@@ -174,16 +173,15 @@
       "id": "h09",
       "file": "internal/config/config.go",
       "lines": "14-17",
-      "verdict": "unclear",
+      "verdict": "invited",
       "label": "refactor",
-      "severity": "warning",
       "asked": 0.21871565445532373,
       "said": 0,
       "tell": null,
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "changed body of Config",
-      "reason": "weak match",
+      "reason": "asked: turn 1",
       "hash": "1d4bff5ec5b3",
       "high_risk": false
     },
@@ -273,11 +271,11 @@
   ],
   "kept": [],
   "stats": {
-    "hunks": 13,
-    "invited": 6,
-    "unasked": 5,
-    "unclear": 2,
-    "collateral": 1,
+    "hunks": 12,
+    "invited": 8,
+    "unasked": 4,
+    "unclear": 0,
+    "collateral": 2,
     "binary": 0
   },
   "warnings": [],

@@ -304,3 +304,27 @@ func TestXRefShortTermsDoNotCrowdOut(t *testing.T) {
 		t.Errorf("got %d, want 1", n)
 	}
 }
+
+func TestTerms(t *testing.T) {
+	rows := []struct {
+		name string
+		h    model.Hunk
+		want []string
+	}{
+		{"header literal", hk("a.go", nil, []string{`w.Header().Set("X-Request-Id", id)`}, model.SymbolDelta{Enclosing: "serve"}), []string{"X-Request-Id"}},
+		{"removed symbol", hk("a.go", nil, []string{"func legacyPing() {}"}, model.SymbolDelta{Removed: []string{"legacyPing"}}), []string{"legacyPing"}},
+		{"deleted file", model.Hunk{File: "pkg/old_cache.go", DeletedFile: true, Removed: []string{"func Purge() {}"}, Symbols: model.SymbolDelta{Removed: []string{"Purge"}}}, []string{"Purge", "old_cache"}},
+		{"pure code removal", hk("a.go", nil, []string{"\tcache.Flush()"}, model.SymbolDelta{Enclosing: "Close"}), []string{"Close"}},
+		{"go.mod", hk("go.mod", []string{"\tgo.uber.org/zap v1.27.0", "\tgithub.com/ulule/limiter/v3 v3.11.2"}, []string{"\tgo.uber.org/zap v1.26.0"}, model.SymbolDelta{}), []string{"zap", "limiter"}},
+		{"go.mod directives", hk("go.mod", []string{"require (", "go 1.25.0", ")"}, nil, model.SymbolDelta{}), nil},
+		{"package.json", hk("package.json", []string{`    "@types/node": "^20.1.0",`, `    "lodash": "^4.17.21"`}, nil, model.SymbolDelta{}), []string{"node", "lodash"}},
+		{"requirements", hk("requirements.txt", []string{"requests==2.31.0"}, nil, model.SymbolDelta{}), []string{"requests"}},
+		{"test file", hk("a_test.go", []string{"x := 1"}, nil, model.SymbolDelta{}), nil},
+		{"feature", hk("a.go", []string{"func Hello() {}"}, nil, model.SymbolDelta{Added: []string{"Hello"}}), nil},
+	}
+	for _, r := range rows {
+		if got := Terms(r.h); fmt.Sprint(got) != fmt.Sprint(r.want) {
+			t.Errorf("%s: Terms = %q, want %q", r.name, got, r.want)
+		}
+	}
+}

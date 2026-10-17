@@ -10,7 +10,9 @@ import (
 )
 
 // decide sets s.Verdict, s.Reason and s.Turn from the scores already on s.
-// askedTurn is the turn of the prompt that produced s.Asked; hasTranscript
+// asked is the Test 1 score for the verdict: s.Asked, or less when the
+// evidence cap (R36) held a high-risk hunk below Invite. askedTurn is the
+// turn of the prompt that produced asked; hasTranscript
 // reports whether a transcript was supplied. Rules, first match wins (§6.4,
 // "flag generously, drop carefully"):
 //
@@ -25,8 +27,9 @@ import (
 //     "agent said: turn N" (N = edit event turn).
 //  5. Not high-risk, max(asked, said) ≥ Low → unclear. A high-risk hunk
 //     Test 1 does not invite is always unasked (§6.4, R33).
-//  6. Otherwise unasked.
-func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscript bool) {
+//  6. Otherwise unasked; reason "asked: generic overlap only" when the raw
+//     s.Asked reached Invite and only the evidence cap kept it out.
+func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOnly, hasTranscript bool) {
 	set := func(v model.Verdict, reason string, turn int) {
 		s.Verdict, s.Reason, s.Turn = v, reason, turn
 	}
@@ -34,7 +37,6 @@ func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscri
 	if s.Event != nil {
 		eventTurn = s.Event.Turn
 	}
-	asked := s.Asked
 	switch {
 	case diffOnly || !s.AskedKnown:
 		if s.HighRisk {
@@ -50,6 +52,8 @@ func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscri
 		set(model.VerdictInvited, fmt.Sprintf("agent said: turn %d", eventTurn), eventTurn)
 	case !s.HighRisk && (asked >= th.Low || s.Said >= th.Low):
 		set(model.VerdictUnclear, "weak match", eventTurn)
+	case s.Asked >= th.Invite:
+		set(model.VerdictUnasked, genericReason, eventTurn)
 	default:
 		set(model.VerdictUnasked, "no match", eventTurn)
 	}

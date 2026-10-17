@@ -72,6 +72,7 @@ func Score(r *gitx.Repo, sel *adapter.Selection, th invite.Thresholds) (*report.
 		Hunks:      sel.Hunks,
 		Transcript: sel.Transcript,
 		Classify:   label.ClassifyHunk,
+		Terms:      label.Terms,
 		Th:         th,
 		Tells:      tells,
 		DiffOnly:   sel.Caps.Level == adapter.DiffOnly,

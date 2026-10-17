@@ -16,7 +16,7 @@ type Thresholds struct {
 // Default is calibrated on the labelled fixtures (internal/fixtures,
 // `go test ./internal/fixtures -run TestCalibrate -calibrate -v`): the
 // zero-miss pair with the lowest false-alarm rate, then the highest Invite.
-var Default = Thresholds{Invite: 0.35, Low: 0.20}
+var Default = Thresholds{Invite: 0.20, Low: 0.15}
 
 // Step is the threshold shift: --strict adds, --lenient subtracts (floor 0.05).
 const Step = 0.10
@@ -92,12 +92,15 @@ func Overlap(a, b []string, w map[string]float64) float64 {
 
 // Input is everything Score needs. Classify supplies each hunk's label and
 // whether it is high-risk (deletion, test, dependency); it is called exactly
-// once per hunk. Tells may be nil (no tell fires).
+// once per hunk. Terms supplies a high-risk hunk's specific names (removed
+// symbols and literals, dependency names; see evidence); it may be nil (no
+// names). Tells may be nil (no tell fires).
 type Input struct {
 	Hunks      []model.Hunk
 	Transcript *model.Transcript
 	Classify   func(model.Hunk) (model.Label, bool /*highRisk*/)
 	Th         Thresholds
+	Terms      func(model.Hunk) []string
 	Tells      *Tells
 	DiffOnly   bool
 }
@@ -110,6 +113,11 @@ type Input struct {
 //     is false.
 //   - asked = max over kept prompts p of Overlap(HunkTokens(h), Tokens(p)),
 //     with IDF docs = every hunk's tokens + every kept prompt's tokens.
+//   - Evidence cap (R36): for the verdict only, a high-risk hunk's overlap
+//     with a prompt that lacks specific evidence for it (see evidence) counts
+//     at most Invite - 0.01, so generic shared words never invite it. Asked
+//     keeps the raw maximum; when the cap alone keeps the hunk from being
+//     invited the reason is "asked: generic overlap only".
 //   - The hunk is aligned to an edit event (Align). said =
 //     Overlap(Tokens(event.Statement), union of kept prompt tokens); 0 with
 //     no event or a statement of < 4 content tokens (R9, as for prompts). Statement tokens absent from the IDF docs weigh ln(1+N), as
@@ -120,6 +128,7 @@ type Input struct {
 func Score(in Input) []model.Scored {
 	type prompt struct {
 		turn int
+		text string
 		toks []string
 	}
 	var prompts []prompt
@@ -131,7 +140,7 @@ func Score(in Input) []model.Scored {
 				continue
 			}
 			if toks := Tokens(p.Text); len(toks) >= minPromptTokens {
-				prompts = append(prompts, prompt{p.Turn, toks})
+				prompts = append(prompts, prompt{p.Turn, p.Text, toks})
 			}
 		}
 		edits = in.Transcript.Edits
@@ -157,10 +166,19 @@ func Score(in Input) []model.Scored {
 		if in.Classify != nil {
 			s.Label, s.HighRisk = in.Classify(h)
 		}
-		askedTurn := 0
+		var terms []string
+		if s.HighRisk && in.Terms != nil {
+			terms = in.Terms(h)
+		}
+		asked, askedTurn := 0.0, 0
 		for j, p := range prompts {
-			if o := Overlap(hunkToks[i], p.toks, w); o > s.Asked || j == 0 {
-				s.Asked, askedTurn = o, p.turn
+			o := Overlap(hunkToks[i], p.toks, w)
+			s.Asked = max(s.Asked, o)
+			if s.HighRisk && o >= in.Th.Invite-capMargin && !evidence(s.Label, p.text, p.toks, terms, hunkToks[i], w) {
+				o = in.Th.Invite - capMargin
+			}
+			if o > asked || j == 0 {
+				asked, askedTurn = o, p.turn
 			}
 		}
 		if !in.DiffOnly {
@@ -178,7 +196,7 @@ func Score(in Input) []model.Scored {
 			}
 			s.Tell = in.Tells.Match(s.Event.Statement)
 		}
-		decide(&s, askedTurn, in.Th, in.DiffOnly, hasTranscript)
+		decide(&s, asked, askedTurn, in.Th, in.DiffOnly, hasTranscript)
 		out[i] = s
 	}
 	return out

@@ -15,8 +15,8 @@
     "base_source": "captured"
   },
   "thresholds": {
-    "invite": 0.35,
-    "low": 0.2
+    "invite": 0.2,
+    "low": 0.15
   },
   "prompts": [
     {
@@ -39,7 +39,7 @@
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "changed body of ParseList",
-      "reason": "agent said: turn 1",
+      "reason": "asked: turn 1",
       "hash": "0dbe58ddba24",
       "high_risk": false
     },
@@ -57,7 +57,7 @@
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "changed test/CI file parser/parser_test.go",
-      "reason": "no match",
+      "reason": "asked: generic overlap only",
       "hash": "395b4486bf6d",
       "high_risk": true
     }

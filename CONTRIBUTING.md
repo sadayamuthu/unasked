@@ -127,16 +127,14 @@ starting from a captured baseline as the hooks would, and enforces:
 - **False alarms: at most 20%** of listed hunks (`unasked` + `unclear`)
   labelled `invited`.
 
-Honest status: on the current six synthetic cases (three per agent) the
-recall gate holds with zero misses, and the measured false-alarm rate is
-**21.4%** (3 of 14 listed hunks), just over the target. When the two gates
-conflict, recall wins, so CI runs with `UNASKED_RELAX_CEILING=1`, which still
-fails on any miss and prints the measured rate. All three false alarms are
-in one case (`claude-code/rate-limit`); known causes are struct fields not
-being tracked as symbols and back-to-back edits in one Claude Code turn
-getting no statement. The ceiling comes back once those are fixed. Six
-synthetic cases are not much evidence, which is why real sessions are the
-most useful contribution.
+Honest status: on the current seven synthetic cases (four Claude Code, three
+Codex) the recall gate holds with zero misses, and the measured false-alarm
+rate is **11.8%** (2 of 17 listed hunks), under the target. Both false alarms
+are router hunks in `claude-code/rate-limit-realistic`, whose prompt shares
+few words with them. When the two gates conflict, recall wins, so CI still
+runs with `UNASKED_RELAX_CEILING=1`, which fails on any miss and prints the
+measured rate. Seven synthetic cases are not much evidence, which is why real
+sessions are the most useful contribution.
 
 ```sh
 go test ./internal/fixtures -run TestGates -v                    # the gates
