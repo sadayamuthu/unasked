@@ -152,8 +152,12 @@ runs:
           else
             marker='<!-- unasked-report -->'
             body="$marker"$'\n'"$(cat "$md")"
+            # Only our own comment is updated: one carrying the marker AND
+            # written by github-actions[bot] or the token's user, so a
+            # comment anyone else wrote with the marker is never overwritten.
+            me=$(gh api user --jq .login 2>/dev/null) || me=""
             id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-              --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | tail -n 1) || id=""
+              --jq ".[] | select((.user.login == \"github-actions[bot]\" or (\"$me\" != \"\" and .user.login == \"$me\")) and (.body | startswith(\"$marker\"))) | .id" | tail -n 1) || id=""
             if [ -n "$id" ]; then
               gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" >/dev/null \
                 || echo "::warning::could not update the unasked comment"
