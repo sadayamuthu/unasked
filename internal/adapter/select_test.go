@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,11 +98,8 @@ func contains(ss []string, s string) bool {
 func commitAt(t *testing.T, g *gittest.Repo, date, msg string) {
 	t.Helper()
 	g.Git("add", "-A")
-	cmd := exec.Command("git", "commit", "-q", "-m", msg)
-	cmd.Dir = g.Dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull,
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e.com",
-		"GIT_AUTHOR_DATE="+date, "GIT_COMMITTER_DATE="+date)
+	cmd := g.Cmd("commit", "-q", "-m", msg)
+	cmd.Env = append(cmd.Env, "GIT_AUTHOR_DATE="+date, "GIT_COMMITTER_DATE="+date)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, out)
 	}

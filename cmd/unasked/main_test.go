@@ -295,8 +295,8 @@ func TestPatchPrintsReversePatch(t *testing.T) {
 		t.Errorf("patch does not restore the deleted line:\n%s", patch)
 	}
 	// Applying the printed patch forward has the same effect as --drop.
-	cmd := exec.Command("git", "apply", "--unidiff-zero")
-	cmd.Dir, cmd.Stdin = c.g.Dir, strings.NewReader(patch)
+	cmd := c.g.Cmd("apply", "--unidiff-zero")
+	cmd.Stdin = strings.NewReader(patch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git apply: %v\n%s\n%s", err, out, patch)
 	}
@@ -457,9 +457,7 @@ func TestErrorsExit3(t *testing.T) {
 	c.g.Git("checkout", "-q", "main")
 	c.g.Write("colors.txt", "main\n")
 	c.g.Commit("main")
-	cmd := exec.Command("git", "merge", "side")
-	cmd.Dir = c.g.Dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+	cmd := c.g.Cmd("merge", "side")
 	_ = cmd.Run() // conflicts on purpose
 	if code, _, errs := c.run(); code != 3 || !strings.Contains(errs, "conflicts") {
 		t.Errorf("unmerged: exit %d %q", code, errs)

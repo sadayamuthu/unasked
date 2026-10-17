@@ -27,17 +27,30 @@ func New(t testing.TB) *Repo {
 	return r
 }
 
-// Git runs git in the repo and returns trimmed stdout. Any failure fails the test.
-func (r *Repo) Git(args ...string) string {
-	r.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Dir
-	cmd.Env = append(os.Environ(),
+// Env is the isolated environment every test git process runs in: no global
+// or system config (so a runner's core.autocrlf or user identity cannot leak
+// in), a fixed identity and date, and the C locale. Append to it to override.
+func Env() []string {
+	return append(os.Environ(),
 		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
 		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 		"LC_ALL=C")
+}
+
+// Cmd returns a git command rooted in the repo with the isolated Env.
+func (r *Repo) Cmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Dir
+	cmd.Env = Env()
+	return cmd
+}
+
+// Git runs git in the repo and returns trimmed stdout. Any failure fails the test.
+func (r *Repo) Git(args ...string) string {
+	r.t.Helper()
+	cmd := r.Cmd(args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

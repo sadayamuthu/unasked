@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -114,9 +113,7 @@ func TestSnapshotUnmergedIndex(t *testing.T) {
 	g.Git("checkout", "-q", "main")
 	g.Write("f", "main\n")
 	g.Commit("main")
-	merge := exec.Command("git", "merge", "other")
-	merge.Dir = g.Dir
-	merge.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e.com")
+	merge := g.Cmd("merge", "other")
 	if err := merge.Run(); err == nil {
 		t.Fatal("expected merge conflict")
 	}

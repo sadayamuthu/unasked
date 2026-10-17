@@ -143,7 +143,7 @@ sessions are the most useful contribution.
 go test ./internal/fixtures -run TestGates -v                    # the gates
 go test ./internal/fixtures -run TestGates -update               # rewrite expected.json
 go test ./internal/fixtures -run TestCalibrate -calibrate -v     # re-pick the thresholds
-go test ./internal/fixtures -run TestPerformanceBudget -v        # 5,000 files, 40 hunks, 300 turns < 1 s
+go test ./internal/fixtures -run TestPerformanceBudget -v        # 5,000 files, 40 hunks, 300 turns < 1 s (2 s on Windows CI runners)
 ```
 
 **Every scoring change needs a fixture or a unit test.** For a miss, add a

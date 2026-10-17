@@ -281,6 +281,9 @@ func snap(t *testing.T, g *gittest.Repo) (*gitx.Repo, string) {
 func TestParseOddPaths(t *testing.T) {
 	g := gittest.New(t)
 	odd := "dir with space/naïve \"q\".go"
+	if runtime.GOOS == "windows" {
+		odd = "dir with space/naïve q.go" // '"' is not a legal Windows filename character
+	}
 	g.Write("plain.go", "package a\n\nfunc A() {}\n\nfunc B() {}\n")
 	g.Write("mv me.go", "one\ntwo\nthree\nfour\nfive\n")
 	g.Commit("init")
