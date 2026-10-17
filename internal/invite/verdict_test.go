@@ -25,7 +25,7 @@ func TestVerdictRules(t *testing.T) {
 		{"1 asked unknown, no event, high risk", model.Scored{HighRisk: true}, false, false, model.VerdictUnasked, "no usable prompt"},
 		{"2 no agent edit", model.Scored{Asked: 0.9, AskedKnown: true}, false, false, model.VerdictUnclear, "no agent edit found"},
 		{"3 asked", model.Scored{Asked: 0.4, AskedKnown: true, Event: ev}, false, false, model.VerdictInvited, "asked: turn 3"},
-		{"3 asked invites high risk", model.Scored{Asked: 0.5, AskedKnown: true, Event: ev, HighRisk: true}, false, false, model.VerdictInvited, "asked: turn 3"},
+		{"3 evidence-backed high risk is only unclear (R36g)", model.Scored{Asked: 0.5, AskedKnown: true, Event: ev, HighRisk: true}, false, false, model.VerdictUnclear, "you may have asked for this (turn 3) — confirm with unasked --keep"},
 		{"3 tell with asked", model.Scored{Asked: 0.5, AskedKnown: true, Event: ev, Tell: "minor", Said: 0.9}, false, false, model.VerdictInvited, "asked: turn 3"},
 		{"4 said", model.Scored{Asked: 0.1, Said: 0.4, AskedKnown: true, Event: ev}, false, false, model.VerdictInvited, "agent said: turn 7"},
 		{"1 asked unknown, event, said high", model.Scored{Said: 0.9, Event: ev}, false, false, model.VerdictUnclear, "no usable prompt"},

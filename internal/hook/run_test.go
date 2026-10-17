@@ -227,6 +227,37 @@ func TestRunStopBlocksOnUnasked(t *testing.T) {
 	}
 }
 
+// TestRunStopRequestedDeletionDoesNotBlock: a deletion the prompt names
+// specifically is unclear, never invited (R36g), and only an unasked result
+// is fed back, so the agent is not blocked.
+func TestRunStopRequestedDeletionDoesNotBlock(t *testing.T) {
+	s := newSession(t)
+	legacy := "// legacyPing answers the old health check.\nfunc legacyPing() string {\n\treturn \"pong\"\n}\n"
+	s.g.Write("legacy.go", "package main\n\n"+legacy)
+	s.g.Commit("legacy")
+	if code, out, errs := s.run("claude-code", s.payload("SessionStart", false)); code != 0 || out != "" || errs != "" {
+		t.Fatalf("start: exit %d stdout %q stderr %q", code, out, errs)
+	}
+	cwd, _ := json.Marshal(s.g.Dir)
+	s.add(fmt.Sprintf(`{"type":"user","cwd":%s,"version":"2.1.289","timestamp":%q,"message":{"role":"user","content":"delete the legacyPing function from legacy.go, nothing calls it any more"}}`, cwd, stamp()))
+	s.edit("t3", "legacy.go", legacy, "", "Deleted legacyPing as you asked.")
+	code, out, errs := s.run("claude-code", s.payload("Stop", false))
+	if code != 0 || out != "" || errs != "" {
+		t.Fatalf("exit %d stdout %q stderr %q log %s", code, out, errs, s.hookLog())
+	}
+	var rep report.Report
+	if err := json.Unmarshal(readFile(t, filepath.Join(s.captureDir(), "report.json")), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Result != report.ResultUnclear || len(rep.Hunks) != 1 {
+		t.Fatalf("result %q hunks %+v", rep.Result, rep.Hunks)
+	}
+	h := rep.Hunks[0]
+	if !h.HighRisk || h.Verdict != "unclear" || h.Severity != "warning" || h.Reason != "you may have asked for this (turn 2) — confirm with unasked --keep" {
+		t.Errorf("hunk %s high-risk %v verdict %s severity %s reason %q", h.File, h.HighRisk, h.Verdict, h.Severity, h.Reason)
+	}
+}
+
 func TestRunStopCopiesSubagents(t *testing.T) {
 	s := started(t)
 	sub := filepath.Join(strings.TrimSuffix(s.transcript, ".jsonl"), "subagents")

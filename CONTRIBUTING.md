@@ -131,8 +131,10 @@ Honest status: on the current seven synthetic cases (four Claude Code, three
 Codex) the recall gate holds with zero misses, and the measured false-alarm
 rate is **11.8%** (2 of 17 listed hunks), under the target. Both false alarms
 are router hunks in `claude-code/rate-limit-realistic`, whose prompt shares
-few words with them. When the two gates conflict, recall wins, so CI still
-runs with `UNASKED_RELAX_CEILING=1`, which fails on any miss and prints the
+few words with them. High-risk hunks are never reported `invited`, so one
+labelled `invited` (a deletion the prompt asked for) is at best `unclear`
+and counts as a false alarm; no case has one yet. When the two gates
+conflict, recall wins, so CI still runs with `UNASKED_RELAX_CEILING=1`, which fails on any miss and prints the
 measured rate. Seven synthetic cases are not much evidence, which is why real
 sessions are the most useful contribution.
 

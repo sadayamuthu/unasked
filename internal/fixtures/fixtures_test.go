@@ -12,6 +12,7 @@ import (
 
 	"github.com/sadayamuthu/unasked/internal/invite"
 	"github.com/sadayamuthu/unasked/internal/model"
+	"github.com/sadayamuthu/unasked/internal/pipeline"
 	"github.com/sadayamuthu/unasked/internal/report"
 )
 
@@ -107,6 +108,33 @@ func TestGates(t *testing.T) {
 			t.Logf("false-alarm ceiling relaxed (UNASKED_RELAX_CEILING=1): measured rate %.3f > %.2f — publish this figure", total.Rate(), maxFalseAlarmRate)
 		} else {
 			t.Errorf("false-alarm ceiling: rate %.3f (%d/%d) > %.2f", total.Rate(), total.FalseAlarms, total.Listed, maxFalseAlarmRate)
+		}
+	}
+}
+
+// TestHighRiskNeverInvited is the R36g property over the fixtures: at
+// every threshold pair from Invite 0.05 to 0.95, no high-risk hunk of any
+// case is reported invited, before or after keeps.
+func TestHighRiskNeverInvited(t *testing.T) {
+	for _, c := range loadCases(t) {
+		s := Replay(t, c)
+		s.Run(t, invite.Default)
+		for inv := 5; inv <= 95; inv += 5 {
+			th := invite.Thresholds{Invite: float64(inv) / 100, Low: max(float64(inv)/200, 0.05)}
+			rep, scored, err := pipeline.Score(s.Repo, s.Selection, th)
+			if err != nil {
+				t.Fatalf("%s: %v", c.Name, err)
+			}
+			for _, h := range scored {
+				if h.HighRisk && h.Verdict == model.VerdictInvited {
+					t.Errorf("%s %+v: high-risk %s %s scored invited (%s)", c.Name, th, Key(h.Hunk), h.Label, h.Reason)
+				}
+			}
+			for _, h := range rep.Hunks {
+				if h.HighRisk && h.Verdict == string(model.VerdictInvited) {
+					t.Errorf("%s %+v: high-risk %s reported invited (%s)", c.Name, th, h.File, h.Reason)
+				}
+			}
 		}
 	}
 }

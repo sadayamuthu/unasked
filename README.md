@@ -36,10 +36,13 @@ Every hunk gets a verdict (`invited`, `unclear` or `unasked`) and a label:
 | `collateral` | Whitespace-only or import-only changes, or an edit made by a formatter or generator | warning |
 | `unknown` | Anything else | warning |
 
-`deletion`, `test` and `dependency` are high-risk: only your own prompt can
-invite them. The agent's explanation never does, and an agent cannot
-`--keep` them. `unclear` hunks are warnings. Formatting in a file the task
-legitimately changed is folded into one "collateral" line and not counted.
+`deletion`, `test` and `dependency` are high-risk and are never `invited`
+automatically. When one of your prompts names the change specifically
+("remove the X-Request-Id header"), the hunk is `unclear` with "you may have
+asked for this": confirm it with `unasked --keep`. Otherwise it is `unasked`.
+The agent's explanation never helps, and an agent cannot `--keep` them.
+`unclear` hunks are warnings. Formatting in a file the task legitimately
+changed is folded into one "collateral" line and not counted.
 
 ## Install
 

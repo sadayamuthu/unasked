@@ -21,8 +21,13 @@ import (
 //     (§6.4 "No usable prompt").
 //  2. No aligned event but a transcript is present → unclear, reason
 //     "no agent edit found" (Test 2 can never invite it).
-//  3. asked ≥ Invite → invited, reason "asked: turn N" (N = prompt turn).
-//     Only Test 1 can invite a high-risk hunk.
+//  3. asked ≥ Invite → invited, reason "asked: turn N" (N = prompt turn),
+//     unless the hunk is high-risk: a high-risk hunk is never invited by
+//     scoring (R36g). Since the evidence cap holds asked below Invite for a
+//     prompt without specific evidence, asked ≥ Invite here means some
+//     prompt names the hunk specifically: the hunk is unclear, reason
+//     "you may have asked for this (turn N) — confirm with unasked --keep".
+//     Only a user keep removes it.
 //  4. Not high-risk, no tell, said ≥ Invite → invited, reason
 //     "agent said: turn N" (N = edit event turn).
 //  5. Not high-risk, max(asked, said) ≥ Low → unclear. A high-risk hunk
@@ -46,6 +51,8 @@ func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOn
 		}
 	case s.Event == nil && hasTranscript:
 		set(model.VerdictUnclear, "no agent edit found", 0)
+	case asked >= th.Invite && s.HighRisk:
+		set(model.VerdictUnclear, fmt.Sprintf(maybeAskedReason, askedTurn), askedTurn)
 	case asked >= th.Invite:
 		set(model.VerdictInvited, fmt.Sprintf("asked: turn %d", askedTurn), askedTurn)
 	case !s.HighRisk && s.Tell == "" && s.Said >= th.Invite:

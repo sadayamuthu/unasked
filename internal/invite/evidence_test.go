@@ -54,28 +54,28 @@ type evidenceRow struct {
 	capped bool // raw asked >= Invite; reason "asked: generic overlap only"
 }
 
-// checkRows scores each row alone with th. With strict, an unasked row must
-// carry the generic-overlap reason exactly when it is marked capped.
+// maybeAsked is the reason for an evidence-backed high-risk hunk (R36g).
+const maybeAsked = "you may have asked for this (turn 1) — confirm with unasked --keep"
+
+// checkRows scores each row alone with th. No row may be invited: a
+// high-risk hunk is at most unclear, with the maybeAsked reason (R36g). With
+// strict, an unasked row must carry the generic-overlap reason exactly when
+// it is marked capped.
 func checkRows(t *testing.T, th Thresholds, rows []evidenceRow, strict bool) {
 	t.Helper()
 	const generic = "asked: generic overlap only"
 	for _, c := range rows {
-		tr := &model.Transcript{
-			Prompts: []model.Prompt{{Turn: 1, Text: c.prompt}},
-			Edits:   []model.EditEvent{{Turn: 2, File: c.h.File, After: strings.Join(c.h.Added, "\n"), Statement: "updating it"}},
-		}
-		got := Score(Input{Hunks: []model.Hunk{c.h}, Transcript: tr, Th: th,
-			Classify: label.ClassifyHunk, Terms: label.Terms})[0]
+		got := scoreOne(c.prompt, c.h, th)
 		t.Logf("%-45s asked=%.3f %s %q", c.name, got.Asked, got.Verdict, got.Reason)
 		if got.Label != c.label || !got.HighRisk {
 			t.Errorf("%s: label = %s (high-risk %v), want %s", c.name, got.Label, got.HighRisk, c.label)
 		}
-		if got.Verdict != c.want {
+		if got.Verdict != c.want || got.Verdict == model.VerdictInvited {
 			t.Errorf("%s: verdict = %s (%q), asked %.2f; want %s", c.name, got.Verdict, got.Reason, got.Asked, c.want)
 		}
 		switch {
-		case c.want == model.VerdictInvited && got.Reason != "asked: turn 1":
-			t.Errorf("%s: reason = %q, want %q", c.name, got.Reason, "asked: turn 1")
+		case c.want == model.VerdictUnclear && (got.Reason != maybeAsked || got.Turn != 1):
+			t.Errorf("%s: reason = %q turn %d, want %q turn 1", c.name, got.Reason, got.Turn, maybeAsked)
 		case c.capped && (got.Asked < th.Invite || got.Reason != generic):
 			t.Errorf("%s: asked %.2f reason %q; want raw asked >= %.2f (the cap decides) and %q", c.name, got.Asked, got.Reason, th.Invite, generic)
 		case strict && c.want == model.VerdictUnasked && !c.capped && got.Reason == generic:
@@ -84,56 +84,148 @@ func checkRows(t *testing.T, th Thresholds, rows []evidenceRow, strict bool) {
 	}
 }
 
+// scoreOne scores h alone against one prompt (turn 1) and one agent edit.
+func scoreOne(prompt string, h model.Hunk, th Thresholds) model.Scored {
+	tr := &model.Transcript{
+		Prompts: []model.Prompt{{Turn: 1, Text: prompt}},
+		Edits:   []model.EditEvent{{Turn: 2, File: h.File, After: strings.Join(h.Added, "\n"), Statement: "updating it"}},
+	}
+	return Score(Input{Hunks: []model.Hunk{h}, Transcript: tr, Th: th,
+		Classify: label.ClassifyHunk, Terms: label.Terms})[0]
+}
+
+// ruledRows are the reviewer's rows (R36f). Since R36g the rows with
+// specific evidence are unclear, never invited.
+var ruledRows = []evidenceRow{
+	{"store drops connections", "fix the bug where the store drops connections on Close and leaks them", closeMethod, model.LabelDeletion, model.VerdictUnasked, false},
+	{"Close leaves unused connections", "Close leaves unused connections open in the store, fix that leak", closeMethod, model.LabelDeletion, model.VerdictUnasked, false},
+	{"x axis, drop stale samples", "log the request id on the x axis of the latency chart and drop stale samples", xreq, model.LabelDeletion, model.VerdictUnasked, false},
+	{"remove the extra sleep", "the legacy health check ping is slow, remove the extra sleep before it", ping, model.LabelDeletion, model.VerdictUnasked, false},
+	{"requests without install word", "rate limit incoming requests per client and log the rejected requests", requestsDep, model.LabelDependency, model.VerdictUnasked, false},
+	{"remove X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictUnclear, false},
+	{"delete the legacyPing handler", "delete the legacyPing handler", ping, model.LabelDeletion, model.VerdictUnclear, false},
+	{"remove Close", "remove Close from the store interface", closeMethod, model.LabelDeletion, model.VerdictUnclear, false},
+	{"drop the legacy ping endpoint", "drop the legacy ping endpoint (legacyPing)", ping, model.LabelDeletion, model.VerdictUnclear, false},
+	{"add the requests library", "add the requests library for the http client", requestsDep, model.LabelDependency, model.VerdictUnclear, false},
+	{"bump zap", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictUnclear, false},
+	{"add golang.org/x/time", "add golang.org/x/time for the limiter", xtime, model.LabelDependency, model.VerdictUnclear, false},
+}
+
 // TestHighRiskEvidenceRuledRows are the reviewer's rows (R36f) at the
 // shipped thresholds.
 func TestHighRiskEvidenceRuledRows(t *testing.T) {
-	checkRows(t, Default, []evidenceRow{
-		{"store drops connections", "fix the bug where the store drops connections on Close and leaks them", closeMethod, model.LabelDeletion, model.VerdictUnasked, false},
-		{"Close leaves unused connections", "Close leaves unused connections open in the store, fix that leak", closeMethod, model.LabelDeletion, model.VerdictUnasked, false},
-		{"x axis, drop stale samples", "log the request id on the x axis of the latency chart and drop stale samples", xreq, model.LabelDeletion, model.VerdictUnasked, false},
-		{"remove the extra sleep", "the legacy health check ping is slow, remove the extra sleep before it", ping, model.LabelDeletion, model.VerdictUnasked, false},
-		{"requests without install word", "rate limit incoming requests per client and log the rejected requests", requestsDep, model.LabelDependency, model.VerdictUnasked, false},
-		{"remove X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictInvited, false},
-		{"delete the legacyPing handler", "delete the legacyPing handler", ping, model.LabelDeletion, model.VerdictInvited, false},
-		{"remove Close", "remove Close from the store interface", closeMethod, model.LabelDeletion, model.VerdictInvited, false},
-		{"drop the legacy ping endpoint", "drop the legacy ping endpoint (legacyPing)", ping, model.LabelDeletion, model.VerdictInvited, false},
-		{"add the requests library", "add the requests library for the http client", requestsDep, model.LabelDependency, model.VerdictInvited, false},
-		{"bump zap", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictInvited, false},
-		{"add golang.org/x/time", "add golang.org/x/time for the limiter", xtime, model.LabelDependency, model.VerdictInvited, false},
-	}, false)
+	checkRows(t, Default, ruledRows, false)
 }
 
-// TestHighRiskNeedsSpecificEvidence: Test 1 invites a high-risk hunk only when
-// a single prompt names it specifically (R36b–f); generic shared words are
-// capped below Invite for the verdict, while Asked keeps the raw score. At
-// Invite 0.30 rows marked capped have a raw asked score at or above Invite,
-// so the cap itself decides them: at least one per evidence branch.
+// specificRows: at Invite 0.30, rows marked capped have a raw asked score at
+// or above Invite, so the cap itself decides them: at least one per evidence
+// branch. Rows with specific evidence are unclear (R36g).
+var specificRows = []evidenceRow{
+	// deletion (R36b)
+	{"realistic prompt, X-Request-Id deletion", realisticPrompt, xreq, model.LabelDeletion, model.VerdictUnasked, true},
+	{"log the request id", "Log the request id of every rate limited request with the client address", xreq, model.LabelDeletion, model.VerdictUnasked, false},
+	{"request id in error body", "Add the request id to the error response body for support tickets", xreq, model.LabelDeletion, model.VerdictUnasked, false},
+	{"named removal of X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictUnclear, false},
+	{"delete legacyPing", "delete legacyPing from the health server", ping, model.LabelDeletion, model.VerdictUnclear, false},
+	{"delete the legacyPing handler", "delete the legacyPing handler", ping, model.LabelDeletion, model.VerdictUnclear, false},
+	{"one-word name: remove Close", "remove Close from the store interface", closeMethod, model.LabelDeletion, model.VerdictUnclear, false},
+	{"verb and words apart, no x", "the client drops the request id header when unused, log it", idConst, model.LabelDeletion, model.VerdictUnasked, true},
+	{"one-word name under 4 chars", "remove the unused ID constant", idConst, model.LabelDeletion, model.VerdictUnasked, false},
+	{"connection leak, cache.Flush removal", "Fix the connection leak in store Close when the cache is full", flush, model.LabelDeletion, model.VerdictUnasked, true},
+	{"Close returns error, cache.Flush removal", "Make Close return the error from closing the cache store", flush, model.LabelDeletion, model.VerdictUnasked, true},
+	// test (R36c)
+	{"bug fix, test assertion edit", "fix the parser bug with nested quotes", assertEdit, model.LabelTest, model.VerdictUnasked, true},
+	{"add tests, test edit", "add tests for the parser nested quotes", newTest, model.LabelTest, model.VerdictUnclear, false},
+	{"test word, CI file", "run the parser tests with the race detector", ciRace, model.LabelTest, model.VerdictUnasked, true},
+	{"CI word, CI file", "add the race detector to the parser CI workflow", ciRace, model.LabelTest, model.VerdictUnclear, false},
+	// dependency (R36c)
+	{"bump zap, go.mod change", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictUnclear, false},
+	{"rate-limit prompt, new dependency", realisticPrompt, xtime, model.LabelDependency, model.VerdictUnasked, false},
+	{"rate limit package, last segment only", "add a rate limit package to the api server, reset each time window", xtime, model.LabelDependency, model.VerdictUnasked, true},
+	{"log the time, last segment only", "Add rate limiting to the api server and log the time of each rejected request", xtime, model.LabelDependency, model.VerdictUnasked, false},
+	{"full module path", "add golang.org/x/time for the limiter", xtime, model.LabelDependency, model.VerdictUnclear, false},
+}
+
+// TestHighRiskNeedsSpecificEvidence: only a single prompt that names a
+// high-risk hunk specifically (R36b–f) can lift it from unasked, and then
+// only to unclear (R36g); generic shared words are capped below Invite for
+// the verdict, while Asked keeps the raw score.
 func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
-	checkRows(t, Thresholds{Invite: 0.30, Low: 0.15}, []evidenceRow{
-		// deletion (R36b)
-		{"realistic prompt, X-Request-Id deletion", realisticPrompt, xreq, model.LabelDeletion, model.VerdictUnasked, true},
-		{"log the request id", "Log the request id of every rate limited request with the client address", xreq, model.LabelDeletion, model.VerdictUnasked, false},
-		{"request id in error body", "Add the request id to the error response body for support tickets", xreq, model.LabelDeletion, model.VerdictUnasked, false},
-		{"named removal of X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictInvited, false},
-		{"delete legacyPing", "delete legacyPing from the health server", ping, model.LabelDeletion, model.VerdictInvited, false},
-		{"delete the legacyPing handler", "delete the legacyPing handler", ping, model.LabelDeletion, model.VerdictInvited, false},
-		{"one-word name: remove Close", "remove Close from the store interface", closeMethod, model.LabelDeletion, model.VerdictInvited, false},
-		{"verb and words apart, no x", "the client drops the request id header when unused, log it", idConst, model.LabelDeletion, model.VerdictUnasked, true},
-		{"one-word name under 4 chars", "remove the unused ID constant", idConst, model.LabelDeletion, model.VerdictUnasked, false},
-		{"connection leak, cache.Flush removal", "Fix the connection leak in store Close when the cache is full", flush, model.LabelDeletion, model.VerdictUnasked, true},
-		{"Close returns error, cache.Flush removal", "Make Close return the error from closing the cache store", flush, model.LabelDeletion, model.VerdictUnasked, true},
-		// test (R36c)
-		{"bug fix, test assertion edit", "fix the parser bug with nested quotes", assertEdit, model.LabelTest, model.VerdictUnasked, true},
-		{"add tests, test edit", "add tests for the parser nested quotes", newTest, model.LabelTest, model.VerdictInvited, false},
-		{"test word, CI file", "run the parser tests with the race detector", ciRace, model.LabelTest, model.VerdictUnasked, true},
-		{"CI word, CI file", "add the race detector to the parser CI workflow", ciRace, model.LabelTest, model.VerdictInvited, false},
-		// dependency (R36c)
-		{"bump zap, go.mod change", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictInvited, false},
-		{"rate-limit prompt, new dependency", realisticPrompt, xtime, model.LabelDependency, model.VerdictUnasked, false},
-		{"rate limit package, last segment only", "add a rate limit package to the api server, reset each time window", xtime, model.LabelDependency, model.VerdictUnasked, true},
-		{"log the time, last segment only", "Add rate limiting to the api server and log the time of each rejected request", xtime, model.LabelDependency, model.VerdictUnasked, false},
-		{"full module path", "add golang.org/x/time for the limiter", xtime, model.LabelDependency, model.VerdictInvited, false},
-	}, true)
+	checkRows(t, Thresholds{Invite: 0.30, Low: 0.15}, specificRows, true)
+}
+
+// leakPrompts are prompts that did not ask for the high-risk hunks beside
+// them yet passed a lexical evidence rule in an earlier round. They must
+// never invite them; unclear is acceptable (R36g).
+var leakPrompts = []struct {
+	prompt string
+	hunks  []model.Hunk
+}{
+	{"don't remove the X-Request-Id header, other services still read it", []model.Hunk{xreq}},
+	{"keep zap v1.26.0 in go.mod, do not bump it", []model.Hunk{zap}},
+	{"in the store, drop connections that are close to the idle timeout", []model.Hunk{closeMethod, flush}},
+	{"remove stale entries from Close in the store before returning", []model.Hunk{closeMethod, flush}},
+	{"add more requests to the batch per client in requirements", []model.Hunk{requestsDep}},
+}
+
+func TestHighRiskLeakPromptsNotInvited(t *testing.T) {
+	for _, th := range []Thresholds{Default, {Invite: 0.30, Low: 0.15}} {
+		for _, c := range leakPrompts {
+			for _, h := range c.hunks {
+				got := scoreOne(c.prompt, h, th)
+				t.Logf("%.2f %-70q %s asked=%.3f %s %q", th.Invite, c.prompt, h.File, got.Asked, got.Verdict, got.Reason)
+				if !got.HighRisk || got.Verdict == model.VerdictInvited {
+					t.Errorf("%q, %s at %+v: high-risk %v verdict %s (%q), want a high-risk hunk not invited",
+						c.prompt, h.File, th, got.HighRisk, got.Verdict, got.Reason)
+				}
+			}
+		}
+	}
+}
+
+// TestHighRiskNeverInvited is the R36g property over every unit table: for
+// every high-risk hunk and every prompt in the tables, at every threshold
+// from 0.05 to 0.95, nothing in the scoring chain (Test 1, Test 2, the
+// forced/helper pass, the collateral fold) makes it invited. Each hunk is
+// scored alone and then all together, so the forced pass and the collateral
+// fold have invited sources to work from.
+func TestHighRiskNeverInvited(t *testing.T) {
+	hunks := []model.Hunk{xreq, ping, flush, assertEdit, newTest, ciRace, zap, xtime, idConst, closeMethod, requestsDep}
+	for i := range hunks {
+		hunks[i].ID = fmt.Sprintf("h%02d", i+1)
+	}
+	var prompts []string
+	for _, rs := range [][]evidenceRow{ruledRows, specificRows} {
+		for _, r := range rs {
+			prompts = append(prompts, r.prompt)
+		}
+	}
+	for _, c := range leakPrompts {
+		prompts = append(prompts, c.prompt)
+	}
+	check := func(th Thresholds, prompt string, hs []model.Hunk) {
+		tr := &model.Transcript{Prompts: []model.Prompt{{Turn: 1, Text: prompt}}}
+		for i, h := range hs {
+			tr.Edits = append(tr.Edits, model.EditEvent{Turn: 2 + i, File: h.File, After: strings.Join(h.Added, "\n"),
+				Statement: "as you asked: " + prompt})
+		}
+		scored := Score(Input{Hunks: hs, Transcript: tr, Th: th, Classify: label.ClassifyHunk, Terms: label.Terms})
+		scored = label.Apply(nil, Forced(scored))
+		for _, s := range scored {
+			if s.HighRisk && s.Verdict == model.VerdictInvited {
+				t.Errorf("%+v %q: high-risk %s %s invited (%q)", th, prompt, s.Hunk.File, s.Label, s.Reason)
+			}
+		}
+	}
+	for inv := 5; inv <= 95; inv += 5 {
+		th := Thresholds{Invite: float64(inv) / 100, Low: max(float64(inv)/200, minThreshold)}
+		for _, p := range prompts {
+			check(th, p, hunks)
+			for _, h := range hunks {
+				check(th, p, []model.Hunk{h})
+			}
+		}
+	}
 }
 
 // TestGenericOverlapReasonOnlyWhenCapDecides: a high-risk hunk whose raw

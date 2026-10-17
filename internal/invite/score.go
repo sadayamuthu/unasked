@@ -115,9 +115,10 @@ type Input struct {
 //     with IDF docs = every hunk's tokens + every kept prompt's tokens.
 //   - Evidence cap (R36): for the verdict only, a high-risk hunk's overlap
 //     with a prompt that lacks specific evidence for it (see evidence) counts
-//     at most Invite - 0.01, so generic shared words never invite it. Asked
-//     keeps the raw maximum; when the cap alone keeps the hunk from being
-//     invited the reason is "asked: generic overlap only".
+//     at most Invite - 0.01, so generic shared words never lift it from
+//     unasked. With specific evidence it is unclear, never invited (R36g).
+//     Asked keeps the raw maximum; when the cap alone keeps the hunk at
+//     unasked the reason is "asked: generic overlap only".
 //   - The hunk is aligned to an edit event (Align). said =
 //     Overlap(Tokens(event.Statement), union of kept prompt tokens); 0 with
 //     no event or a statement of < 4 content tokens (R9, as for prompts). Statement tokens absent from the IDF docs weigh ln(1+N), as

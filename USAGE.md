@@ -100,6 +100,18 @@ keep a `deletion`, `test` or `dependency` hunk at all:
 unasked: agents cannot keep deletions, test/CI or dependency changes: drop it (unasked --drop h01) or leave it for the user
 ```
 
+This is how a deletion, test or dependency change you did ask for leaves the
+report. unasked never marks one `invited`; if your prompt named it, it is
+listed `unclear` with `you may have asked for this (turn N) — confirm with
+unasked --keep`, and you confirm it yourself:
+
+```sh
+unasked --keep h01 --reason "asked for in turn 2"
+```
+
+An `unclear` result doesn't block the agent through the hook; only `unasked`
+does.
+
 ### `undo [--list] [--force] [snapshot]`
 
 Restores the newest drop that hasn't been undone (or the named snapshot):
@@ -187,30 +199,37 @@ unasked --keep h01       accept it on this branch
   (`~/.config/unasked/` on Linux, `~/Library/Application Support/unasked/`
   on macOS, `%AppData%\unasked\` on Windows).
 - An unclear hunk also shows why: `weak match`, `no agent edit found` (you,
-  or another tool, made that edit during the session) or `no usable prompt`.
+  or another tool, made that edit during the session), `no usable prompt`, or
+  for a deletion, test or dependency change one of your prompts names,
+  `you may have asked for this (turn N) — confirm with unasked --keep`.
 
 **How a hunk is judged.** Test 1 compares the hunk with your prompts; Test 2
 compares what the agent said before the edit with your prompts. A hunk is
 `invited` when either test scores at least the invite threshold, `unclear`
-when the better score is at least the low threshold, and `unasked` otherwise.
-High-risk hunks are stricter: only Test 1, your own words, can invite them,
-and if it doesn't they are `unasked`. Shared words alone aren't enough: one
-prompt must name the change specifically. For a deletion, that means a
-removal verb in its plain form (`remove`, `delete`, `drop`, `deprecate`,
-`strip`, `eliminate`, `get rid of`, `clean out`, `rip out`) followed within
-four words by the whole removed name (`remove the deprecated X-Request-Id
-header`, `delete the legacyPing handler`); a one-word name needs at least 4
-letters. "the client drops the request id" doesn't count. A deletion with no
-removed name or string to quote can't be invited by your words at all. For a
-test file, a word like `test`, `spec`, `assert` or `coverage`; for a CI file,
-`CI`, `workflow`, `pipeline` or `GitHub Actions`; for a dependency change, a
-word like `bump`, `upgrade` or `dependency`, or the dependency's full name
+when the better score is at least the low threshold, and `unasked`
+otherwise. High-risk hunks are stricter: they are never `invited`, by either
+test. Wording can't prove that you asked for a deletion ("don't remove the
+X-Request-Id header" names it too), so the best your words can do is make
+the hunk `unclear` with reason `you may have asked for this (turn N) —
+confirm with unasked --keep`; only your own `--keep` accepts it. That takes
+a Test 1 score of at least the invite threshold from a prompt that names the
+change specifically; shared words alone leave the hunk `unasked`. For a
+deletion, "specifically" means a removal verb in its plain form (`remove`,
+`delete`, `drop`, `deprecate`, `strip`, `eliminate`, `get rid of`, `clean
+out`, `rip out`) followed within four words by the whole removed name
+(`remove the deprecated X-Request-Id header`, `delete the legacyPing
+handler`); a one-word name needs at least 4 letters. "the client drops the
+request id" doesn't count. A deletion with no removed name or string to
+quote can't be lifted from `unasked` by your words. For a test file, a word
+like `test`, `spec`, `assert` or `coverage`; for a CI file, `CI`,
+`workflow`, `pipeline` or `GitHub Actions`; for a dependency change, a word
+like `bump`, `upgrade` or `dependency`, or the dependency's full name
 (`golang.org/x/time`, `@types/node`; a one-word name like `requests` only
-next to a word like `add`, `install` or `library`).
-Otherwise the hunk is `unasked` with reason `asked: generic overlap only`,
-while `asked` still shows the raw score. When there is no transcript or no
-usable prompt, high-risk hunks are `unasked` and everything else is
-`unclear`.
+next to a word like `add`, `install` or `library`). Without such a prompt
+the hunk is `unasked`, with reason `asked: generic overlap only` when the
+raw score reached the invite threshold, while `asked` still shows the raw
+score. When there is no transcript or no usable prompt, high-risk hunks are
+`unasked` and everything else is `unclear`.
 
 `--format md` prints the same report sized for a pull-request comment or a
 job summary (UNCLEAR and COLLATERAL fold into `<details>`).
@@ -516,8 +535,9 @@ hook config files (`hook install`, `hook uninstall`).
 
 - Scoring is lexical: it compares words (stemmed, English) in your prompts,
   the agent's statements and the hunk. A prompt that happens to share words
-  with an unrelated hunk can invite it, and a terse prompt can leave real
-  work `unclear`. `--strict` and `--lenient` shift the thresholds.
+  with an unrelated hunk can invite it (never a deletion, test or dependency
+  change), and a terse prompt can leave real work `unclear`. `--strict` and
+  `--lenient` shift the thresholds.
 - On the labelled fixture set, about one listed hunk in five is one a human
   would call invited (see [CONTRIBUTING](CONTRIBUTING.md#fixtures)). The set
   is small and synthetic so far.

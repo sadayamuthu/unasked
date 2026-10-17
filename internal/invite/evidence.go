@@ -10,8 +10,12 @@ import (
 )
 
 // genericReason is the reason when the evidence cap alone keeps a high-risk
-// hunk from being invited.
+// hunk unasked.
 const genericReason = "asked: generic overlap only"
+
+// maybeAskedReason is the reason for a high-risk hunk some prompt names
+// specifically (R36g); %d is that prompt's turn.
+const maybeAskedReason = "you may have asked for this (turn %d) — confirm with unasked --keep"
 
 // capMargin is how far below Invite the evidence cap holds an asked score.
 const capMargin = 0.01
