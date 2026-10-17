@@ -108,13 +108,13 @@ func runDrop(r *gitx.Repo, o *options, stdin io.Reader, stdout io.Writer) (int, 
 		last = rep
 	}
 	explicit := len(o.ids) > 0
-	var hashes []string
+	var targets []report.Target
 	if explicit {
-		if hashes, err = last.Resolve(o.ids); err != nil {
+		if targets, err = last.ResolveTargets(o.ids); err != nil {
 			return 0, err
 		}
 	}
-	plan, err := revert.Prepare(r, last, scored, hashes, explicit)
+	plan, err := revert.PrepareTargets(r, last, scored, targets, explicit)
 	if err != nil {
 		return 0, err
 	}
@@ -141,16 +141,23 @@ func runDrop(r *gitx.Repo, o *options, stdin io.Reader, stdout io.Writer) (int, 
 	if after != nil {
 		_ = report.SaveLastFile(r, lastFile(stdin), after)
 	}
+	// Name each dropped hunk by the id it had in the report the caller read:
+	// matched by hash, file and first line, since hashes can repeat.
 	display := map[string]string{}
 	for _, h := range last.Hunks {
-		display[h.Hash] = h.ID
+		start, _, _ := strings.Cut(h.Lines, "-")
+		display[h.Hash+"\x00"+h.File+"\x00"+start] = h.ID
 	}
 	ids := make([]string, 0, len(plan.Hunks))
+	seen := map[string]bool{}
 	for _, h := range plan.Hunks {
-		if d := display[h.Hash]; d != "" {
-			ids = append(ids, d)
-		} else {
-			ids = append(ids, h.ID)
+		id := display[h.Hash+"\x00"+h.File+"\x00"+strconv.Itoa(h.NewStart)]
+		if id == "" {
+			id = h.ID
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
 	fmt.Fprintf(stdout, "dropped %s (snapshot %s; undo with: unasked undo)\n", strings.Join(ids, " "), id)

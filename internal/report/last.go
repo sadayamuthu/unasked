@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/sadayamuthu/unasked/internal/gitx"
 )
@@ -92,6 +94,36 @@ func (r *Report) Resolve(ids []string) ([]string, error) {
 			out = append(out, h)
 		} else if hashRe.MatchString(id) {
 			out = append(out, id)
+		} else {
+			return nil, fmt.Errorf("unknown hunk id %q: re-run unasked to refresh the report", id)
+		}
+	}
+	return out, nil
+}
+
+// Target names one hunk: its content hash and, for a display id, the file
+// and first new line it had in the report, which tell apart hunks with the
+// same hash (the same change made twice in one file).
+type Target struct {
+	Hash, File string
+	Start      int
+}
+
+// ResolveTargets maps display ids ("h12") to the hunk they name in r, and
+// 12-hex content hashes to a Target with the hash only.
+func (r *Report) ResolveTargets(ids []string) ([]Target, error) {
+	byID := map[string]HunkJSON{}
+	for _, h := range r.Hunks {
+		byID[h.ID] = h
+	}
+	out := make([]Target, 0, len(ids))
+	for _, id := range ids {
+		if h, ok := byID[id]; ok {
+			start, _, _ := strings.Cut(h.Lines, "-")
+			n, _ := strconv.Atoi(start)
+			out = append(out, Target{Hash: h.Hash, File: h.File, Start: n})
+		} else if hashRe.MatchString(id) {
+			out = append(out, Target{Hash: id})
 		} else {
 			return nil, fmt.Errorf("unknown hunk id %q: re-run unasked to refresh the report", id)
 		}

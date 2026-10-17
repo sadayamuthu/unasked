@@ -1305,3 +1305,26 @@ func TestDropNoIDsSkipsShellMade(t *testing.T) {
 		t.Fatalf("named shell hunks: %v %+v", err, p)
 	}
 }
+
+// m1: a drop without ids also refuses when no prompt was usable (Test 1
+// unknown, spec §6.4), whether the hunks come from the last report or the
+// current scoring.
+func TestDropRefusesNoUsablePromptWithoutIDs(t *testing.T) {
+	f := fourHunks(t)
+	cur := f.scored(nil)
+	for i := range cur {
+		cur[i].Reason = "no usable prompt"
+	}
+	last := &report.Report{Transcript: "present"}
+	for _, s := range cur {
+		last.Hunks = append(last.Hunks, report.HunkJSON{ID: s.Hunk.ID, Hash: s.Hunk.Hash, Verdict: string(s.Verdict), Reason: s.Reason})
+	}
+	for _, l := range []*report.Report{nil, last} {
+		if _, err := Prepare(f.r, l, cur, nil, false); !errors.Is(err, ErrNothingScored) {
+			t.Errorf("last=%v: err = %v, want ErrNothingScored", l != nil, err)
+		}
+	}
+	if _, err := Prepare(f.r, last, cur, hashesOf(cur, byFile("a.txt")), true); err != nil {
+		t.Fatal(err)
+	}
+}

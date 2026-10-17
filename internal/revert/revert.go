@@ -30,7 +30,8 @@ var (
 	ErrVerify           = errors.New("the drop did not verify; the working tree was restored")
 	ErrChangedSinceDrop = errors.New("changed since the drop")
 	ErrNoSnapshot       = errors.New("no drop to undo")
-	// ErrNothingScored is returned for a drop without ids when there was no transcript.
+	// ErrNothingScored is returned for a drop without ids when there was no
+	// transcript or no usable prompt.
 	ErrNothingScored = errors.New("nothing scored: name hunks explicitly")
 )
 
@@ -54,12 +55,30 @@ var applyArgs = []string{"-c", "core.autocrlf=false", "apply", "--unidiff-zero",
 // Hashes in last.Kept and hunks whose reason starts with "kept" count as
 // kept.
 func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes []string, explicit bool) (*Plan, error) {
+	targets := make([]report.Target, len(hashes))
+	for i, h := range hashes {
+		targets[i] = report.Target{Hash: h}
+	}
+	return PrepareTargets(r, last, current, targets, explicit)
+}
+
+// PrepareTargets is Prepare with explicit hunks named by report.Target. A
+// target with a file picks, among current hunks with its hash, the one in
+// that file (at its start line when the file has several); a hash-only
+// target picks every hunk with that hash.
+func PrepareTargets(r *gitx.Repo, last *report.Report, current []model.Scored, targets []report.Target, explicit bool) (*Plan, error) {
 	byHash := map[string][]model.Scored{}
 	present := make([]string, 0, len(current))
 	for _, s := range current {
 		byHash[s.Hunk.Hash] = append(byHash[s.Hunk.Hash], s)
 		present = append(present, s.Hunk.Hash)
 	}
+	type pos struct {
+		hash, file string
+		start      int
+	}
+	chosen := map[pos]bool{} // explicit picks; want marks their hashes too
+	key := func(h model.Hunk) pos { return pos{h.Hash, h.File, h.NewStart} }
 	kept := map[string]bool{}
 	if last != nil {
 		for _, k := range last.Kept {
@@ -70,13 +89,33 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 	want := map[string]bool{}
 	switch {
 	case explicit:
-		for _, h := range hashes {
-			if len(byHash[h]) == 0 {
-				return nil, fmt.Errorf("%w (%s)", ErrStale, h)
+		for _, t := range targets {
+			var picks []model.Scored
+			for _, s := range byHash[t.Hash] {
+				if t.File == "" || s.Hunk.File == t.File {
+					picks = append(picks, s)
+				}
 			}
-			want[h] = true
+			if t.File != "" && len(picks) > 1 {
+				at := picks[:0:0]
+				for _, s := range picks {
+					if s.Hunk.NewStart == t.Start {
+						at = append(at, s)
+					}
+				}
+				picks = at
+			}
+			if len(picks) == 0 {
+				return nil, fmt.Errorf("%w (%s)", ErrStale, t.Hash)
+			}
+			for _, s := range picks {
+				chosen[key(s.Hunk)] = true
+			}
+			want[t.Hash] = true
 		}
-	case last != nil && last.Transcript == "none":
+	case last != nil && (last.Transcript == "none" || lastUnscored(last)),
+		last == nil && currentUnscored(current):
+		// No transcript, or no usable prompt (Test 1 unknown, §6.4).
 		return nil, ErrNothingScored
 	case last != nil:
 		for _, h := range last.Hunks {
@@ -99,7 +138,7 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 
 	p := &Plan{present: present}
 	for _, s := range current {
-		if want[s.Hunk.Hash] {
+		if explicit && chosen[key(s.Hunk)] || !explicit && want[s.Hunk.Hash] {
 			p.Hunks = append(p.Hunks, s.Hunk)
 		}
 	}
@@ -145,6 +184,28 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 		return nil, fmt.Errorf("%w: %v", ErrApplyCheck, err)
 	}
 	return p, nil
+}
+
+// noPromptReason is invite's reason when Test 1 could not run (diff-only,
+// or no usable prompt); it is given to every hunk at once.
+const noPromptReason = "no usable prompt"
+
+func lastUnscored(last *report.Report) bool {
+	for _, h := range last.Hunks {
+		if h.Reason == noPromptReason {
+			return true
+		}
+	}
+	return false
+}
+
+func currentUnscored(current []model.Scored) bool {
+	for _, s := range current {
+		if s.Reason == noPromptReason {
+			return true
+		}
+	}
+	return false
 }
 
 // checkPath rejects paths that could escape the work tree.
@@ -523,23 +584,28 @@ func touchedPaths(hs []model.Hunk) []string {
 var errRealigned = errors.New("the re-diff no longer matches the report's hunks")
 
 // verifyHashes checks the rescored diff: its hash multiset must equal the
-// one the plan was made from minus the dropped hashes, exactly.
+// one the plan was made from minus the dropped hunks' hashes, exactly (a
+// hash two hunks share keeps one count when one of them is dropped).
 func verifyHashes(p *Plan, after []model.Scored) error {
-	dropped := map[string]bool{}
+	dropped := map[string]int{}
 	for _, h := range p.Hunks {
-		dropped[h.Hash] = true
+		dropped[h.Hash]++
 	}
 	want, got := map[string]int{}, map[string]int{}
 	for _, h := range p.present {
-		if !dropped[h] {
-			want[h]++
+		want[h]++
+	}
+	for h, n := range dropped {
+		want[h] -= n
+		if want[h] == 0 {
+			delete(want, h)
 		}
 	}
 	for _, s := range after {
 		got[s.Hunk.Hash]++
 	}
 	for h := range dropped {
-		if got[h] > 0 {
+		if got[h] > want[h] {
 			return fmt.Errorf("dropped hunk %s is still present", h)
 		}
 	}

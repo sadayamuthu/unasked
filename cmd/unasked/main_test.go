@@ -689,3 +689,35 @@ func TestDropIDsResolveAgainstOwnReport(t *testing.T) {
 		t.Errorf("user drop of %s took the wrong hunk", colors)
 	}
 }
+
+// m2: two hunks with the same content hash (the same line deleted twice in
+// one file) are told apart by position: dropping one id drops only that
+// hunk, and the id is printed once.
+func TestDropOneOfTwoSameHash(t *testing.T) {
+	c := setup(t, true)
+	c.withFiles(map[string]string{"list.txt": "red\ngreen\nblue\nred\ngreen\nblue\n"})
+	c.g.Write("list.txt", "red\nblue\nred\nblue\n")
+	r := jsonReport(t, c.want(1, "--format", "json"))
+	var ids []string
+	for _, h := range r.Hunks {
+		if h.File == "list.txt" {
+			ids = append(ids, h.ID)
+		}
+	}
+	hashes := map[string]bool{}
+	for _, h := range r.Hunks {
+		if h.File == "list.txt" {
+			hashes[h.Hash] = true
+		}
+	}
+	if len(ids) != 2 || len(hashes) != 1 {
+		t.Fatalf("want two list.txt hunks with one hash: %+v", r.Hunks)
+	}
+	out := c.want(0, "--drop", ids[1])
+	if !regexp.MustCompile(`^dropped ` + ids[1] + ` \(snapshot \S+; undo with: unasked undo\)\n$`).MatchString(out) {
+		t.Errorf("drop output %q", out)
+	}
+	if got := c.g.Read("list.txt"); got != "red\nblue\nred\ngreen\nblue\n" {
+		t.Errorf("list.txt after dropping %s: %q", ids[1], got)
+	}
+}
