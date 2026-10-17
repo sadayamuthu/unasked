@@ -1,0 +1,16 @@
+# Tell phrases: an agent's statement matching any of these marks the edit as
+# self-admittedly incidental, so Test 2 ("the agent said") cannot invite it.
+# One Go regexp per line, matched case-insensitively at word boundaries.
+while (i'm|i am|we're|we are) (here|at it|in there)
+clean ?up
+tidy
+minor
+unrelated
+while refactoring
+noticed
+took the liberty
+might as well
+for consistency
+small improvement
+quick fix
+bonus
