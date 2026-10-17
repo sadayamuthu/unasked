@@ -275,3 +275,43 @@ func TestCRLFPreserved(t *testing.T) {
 		t.Errorf("%q %q", hs[0].Added, hs[0].Patch)
 	}
 }
+
+func TestRenamedFileHunksApplyIndependently(t *testing.T) {
+	g := gittest.New(t)
+	var base []string
+	for i := 1; i <= 40; i++ {
+		base = append(base, strings.Repeat("l", i))
+	}
+	g.Write("old name.txt", strings.Join(base, "\n")+"\n")
+	g.Commit("init")
+	r, from := snap(t, g)
+	edit := append([]string{}, base...)
+	edit[3], edit[30] = "EDIT1", "EDIT2"
+	g.Remove("old name.txt")
+	g.Write("sub/new name.txt", strings.Join(edit, "\n")+"\n")
+	_, to := snap(t, g)
+	hs, _, err := Diff(r, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hs) != 2 || hs[0].OldFile != "old name.txt" || hs[0].File != "sub/new name.txt" {
+		t.Fatalf("hunks: %+v", hs)
+	}
+	for _, h := range hs {
+		if bytes.Contains(h.Patch, []byte("rename")) || bytes.Contains(h.Patch, []byte("similarity")) {
+			t.Errorf("rename lines in patch: %q", h.Patch)
+		}
+		if _, err := r.RunEnv(nil, bytes.NewReader(h.Patch), "apply", "--unidiff-zero", "-R", "--check"); err != nil {
+			t.Errorf("%s: %v\n%s", h.ID, err, h.Patch)
+		}
+	}
+	if _, err := r.RunEnv(nil, bytes.NewReader(hs[0].Patch), "apply", "--unidiff-zero", "-R"); err != nil {
+		t.Fatal(err)
+	}
+	if g.Read("sub/new name.txt") == strings.Join(edit, "\n")+"\n" {
+		t.Error("apply did not change content")
+	}
+	if _, err := r.RunEnv(nil, bytes.NewReader(hs[1].Patch), "apply", "--unidiff-zero", "-R", "--check"); err != nil {
+		t.Errorf("second hunk after first: %v", err)
+	}
+}

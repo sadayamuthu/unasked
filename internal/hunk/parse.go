@@ -41,6 +41,7 @@ type fileState struct {
 	renameFrom, renameTo      string
 	isNew, isDeleted, hasPlus bool
 	binary                    bool
+	plusRaw                   string // raw (possibly quoted) "b/<new>" from the +++ line
 	inHunks                   bool
 }
 
@@ -58,7 +59,11 @@ func Parse(diff []byte) ([]model.Hunk, int, error) {
 	)
 	flush := func() {
 		if cur != nil {
-			cur.Patch = append(append([]byte{}, fs.header...), curBuf...)
+			hdr := fs.header
+			if fs.renameFrom != "" {
+				hdr = modifyHeader(fs.plusRaw)
+			}
+			cur.Patch = append(append([]byte{}, hdr...), curBuf...)
 			cur.Hash = HashOf(cur.File, cur.Removed, cur.Added)
 			hunks = append(hunks, *cur)
 			cur, curBuf = nil, nil
@@ -105,6 +110,7 @@ func Parse(diff []byte) ([]model.Hunk, int, error) {
 				fs.header = append(fs.header, raw...)
 			case strings.HasPrefix(line, "+++ "):
 				fs.newPath = headerPath(line[4:], "b/")
+				fs.plusRaw = strings.TrimSuffix(line[4:], "\t")
 				fs.hasPlus = true
 				fs.inHunks = true
 				fs.header = append(fs.header, raw...)
@@ -250,4 +256,21 @@ func unquote(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// modifyHeader builds a plain-modify header against the new path on both
+// sides, so applying a renamed file's hunk never touches the rename itself.
+// newRaw is the "b/<path>" token exactly as git printed it (maybe quoted).
+func modifyHeader(newRaw string) []byte {
+	oldRaw := newRaw
+	if strings.HasPrefix(newRaw, `"b/`) {
+		oldRaw = `"a/` + newRaw[3:]
+	} else if strings.HasPrefix(newRaw, "b/") {
+		oldRaw = "a/" + newRaw[2:]
+	}
+	tab := ""
+	if strings.Contains(newRaw, " ") && !strings.HasPrefix(newRaw, `"`) {
+		tab = "\t"
+	}
+	return []byte("diff --git " + oldRaw + " " + newRaw + "\n--- " + oldRaw + tab + "\n+++ " + newRaw + tab + "\n")
 }
