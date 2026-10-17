@@ -38,6 +38,12 @@ func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 	zap := model.Hunk{ID: "h01", File: "go.mod",
 		Removed: []string{"	go.uber.org/zap v1.26.0"}, Added: []string{"	go.uber.org/zap v1.27.0"}}
 	xtime := model.Hunk{ID: "h01", File: "go.mod", Added: []string{"	golang.org/x/time v0.5.0 // rate limit package"}}
+	idConst := model.Hunk{ID: "h01", File: "internal/api/ids.go",
+		Removed: []string{`const ID = "X-Request-Id"`},
+		Symbols: model.SymbolDelta{Removed: []string{"ID"}}}
+	closeMethod := model.Hunk{ID: "h01", File: "internal/store/store.go",
+		Removed: []string{"\tClose() error"},
+		Symbols: model.SymbolDelta{Removed: []string{"Close"}, Enclosing: "Store"}}
 
 	th := Thresholds{Invite: 0.30, Low: 0.15}
 	const generic = "asked: generic overlap only"
@@ -55,6 +61,10 @@ func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 		{"request id in error body", "Add the request id to the error response body for support tickets", xreq, model.LabelDeletion, model.VerdictUnasked, false},
 		{"named removal of X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictInvited, false},
 		{"delete legacyPing", "delete legacyPing from the health server", ping, model.LabelDeletion, model.VerdictInvited, false},
+		{"delete the legacyPing handler", "delete the legacyPing handler", ping, model.LabelDeletion, model.VerdictInvited, false},
+		{"one-word name: remove Close", "remove Close from the store interface", closeMethod, model.LabelDeletion, model.VerdictInvited, false},
+		{"verb and words apart, no x", "the client drops the request id header when unused, log it", idConst, model.LabelDeletion, model.VerdictUnasked, true},
+		{"one-word name under 4 chars", "remove the unused ID constant", idConst, model.LabelDeletion, model.VerdictUnasked, false},
 		{"connection leak, cache.Flush removal", "Fix the connection leak in store Close when the cache is full", flush, model.LabelDeletion, model.VerdictUnasked, true},
 		{"Close returns error, cache.Flush removal", "Make Close return the error from closing the cache store", flush, model.LabelDeletion, model.VerdictUnasked, true},
 		// test (R36c)
@@ -65,8 +75,9 @@ func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 		// dependency (R36c)
 		{"bump zap, go.mod change", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictInvited, false},
 		{"rate-limit prompt, new dependency", realisticPrompt, xtime, model.LabelDependency, model.VerdictUnasked, false},
-		{"ratelimit package, new dependency", "add a rate limit package to the api server", xtime, model.LabelDependency, model.VerdictUnasked, true},
-		{"ratelimit package naming the dependency", "add a rate limit package to the api server using golang.org/x/time", xtime, model.LabelDependency, model.VerdictInvited, false},
+		{"rate limit package, last segment only", "add a rate limit package to the api server, reset each time window", xtime, model.LabelDependency, model.VerdictUnasked, true},
+		{"log the time, last segment only", "Add rate limiting to the api server and log the time of each rejected request", xtime, model.LabelDependency, model.VerdictUnasked, false},
+		{"full module path", "add golang.org/x/time for the limiter", xtime, model.LabelDependency, model.VerdictInvited, false},
 	}
 	for _, c := range cases {
 		tr := &model.Transcript{
@@ -134,7 +145,7 @@ func TestKeywordsMatch(t *testing.T) {
 		{ciWords, "add more tests", false},
 		{depWords, "upgrading the http client", true},
 		{depWords, "downgrade it", true},
-		{depWords, "vendor the module", true},
+		{depWords, "vendor the module", false},
 		{depWords, "add a rate limit package", false},
 		{depWords, "install the library at version 2", false},
 	} {
@@ -159,13 +170,21 @@ func TestEvidence(t *testing.T) {
 		{model.LabelDeletion, "a.go", "delete legacyPing", []string{"legacyPing"}, true},
 		{model.LabelDeletion, "a.go", "delete the legacy ping handler", []string{"legacyPing"}, true},
 		{model.LabelDeletion, "a.go", "delete the ping handler", []string{"legacyPing"}, false},
-		{model.LabelDeletion, "a.go", "remove everything from Close", nil, false}, // no removed term
+		{model.LabelDeletion, "a.go", "remove Close from the store interface", []string{"Close"}, true},
+		{model.LabelDeletion, "a.go", "remove the unused ID constant", []string{"ID"}, false},                                          // under 4 characters
+		{model.LabelDeletion, "a.go", "Close the pool, then much later on in the code remove stale entries", []string{"Close"}, false}, // verb 9 words away
+		{model.LabelDeletion, "a.go", "Close it: one two three, remove", []string{"Close"}, true},                                      // verb 5 words away
+		{model.LabelDeletion, "a.go", "remove everything from Close", nil, false},                                                      // no removed term
 		{model.LabelTest, "a_test.go", "add tests", nil, true},
 		{model.LabelTest, ".github/workflows/ci.yml", "add tests", nil, false},
 		{model.LabelTest, ".github/workflows/ci.yml", "fix CI", nil, true},
-		{model.LabelDependency, "go.mod", "use zap for logging", []string{"go.uber.org/zap", "zap"}, true},
-		{model.LabelDependency, "go.mod", "use go.uber.org/zap for logging", []string{"go.uber.org/zap", "zap"}, true},
-		{model.LabelDependency, "go.mod", "add a logging package", []string{"go.uber.org/zap", "zap"}, false},
+		{model.LabelDependency, "go.mod", "use zap for logging", []string{"go.uber.org/zap"}, false},
+		{model.LabelDependency, "go.mod", "use go.uber.org/zap for logging", []string{"go.uber.org/zap"}, true},
+		{model.LabelDependency, "go.mod", "use Go.Uber.Org/Zap for logging", []string{"go.uber.org/zap"}, true},
+		{model.LabelDependency, "go.mod", "use go.uber.org/zapx for logging", []string{"go.uber.org/zap"}, false},
+		{model.LabelDependency, "package.json", "add @types/node", []string{"@types/node"}, true},
+		{model.LabelDependency, "package.json", "add node types", []string{"@types/node"}, false},
+		{model.LabelDependency, "go.mod", "add a logging package", []string{"go.uber.org/zap"}, false},
 		{model.LabelDependency, "go.mod", "bump everything", nil, true},
 	} {
 		if got := evidence(c.l, c.file, c.prompt, c.terms); got != c.want {

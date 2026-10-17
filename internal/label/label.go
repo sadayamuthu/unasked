@@ -518,8 +518,8 @@ func featureName(h model.Hunk) string {
 // Terms returns the specific names a prompt must mention to ask for a
 // high-risk hunk with label l (R36b, R36c), for invite.Input.Terms: for a
 // deletion, its removed symbols and literals (for a deleted file, its removed
-// symbols and its file name); for a dependency change, the full and short
-// names of the dependencies on its changed lines. A deletion with neither
+// symbols and its file name); for a dependency change, the full names of
+// the dependencies on its changed lines. A deletion with neither
 // (pure code removal) has none, so Test 1 can never invite it. Other labels
 // have none.
 func Terms(h model.Hunk, l model.Label) []string {
@@ -537,16 +537,15 @@ func Terms(h model.Hunk, l model.Label) []string {
 }
 
 var (
-	depLineRe  = regexp.MustCompile(`^(?:(?:require|replace|exclude)\s+)?["']?(@?[A-Za-z0-9][\w.\-/@]*)`)
-	depMajorRe = regexp.MustCompile(`^v\d+$`)
-	depSkip    = map[string]bool{"require": true, "replace": true, "exclude": true, "module": true, "go": true, "toolchain": true}
+	depLineRe = regexp.MustCompile(`^(?:(?:require|replace|exclude)\s+)?["']?(@?[A-Za-z0-9][\w.\-/@]*)`)
+	depSkip   = map[string]bool{"require": true, "replace": true, "exclude": true, "module": true, "go": true, "toolchain": true}
 )
 
-// depNames extracts the dependency each manifest or lock line starts with,
-// as its full name and its last path segment that is not a Go major-version
-// suffix, without an npm "@version": "go.uber.org/zap v1.27.0" → "go.uber.org/zap",
-// "zap"; `"@types/node": "^20"` → "@types/node", "node"; "requests==2.31" →
-// "requests". Duplicates are dropped.
+// depNames extracts the full name of the dependency each manifest or lock
+// line starts with (R36d): the module path or the package name with its
+// scope, without an npm "@version" ("go.uber.org/zap v1.27.0" →
+// "go.uber.org/zap", `"@types/node": "^20"` → "@types/node",
+// "requests==2.31" → "requests"). Duplicates are dropped.
 func depNames(lines []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -555,19 +554,13 @@ func depNames(lines []string) []string {
 		if m == nil || depSkip[m[1]] {
 			continue
 		}
-		full := m[1]
-		if i := strings.LastIndex(full, "@"); i > 0 {
-			full = full[:i]
+		name := m[1]
+		if i := strings.LastIndex(name, "@"); i > 0 {
+			name = name[:i]
 		}
-		segs := strings.Split(strings.Trim(full, "/"), "/")
-		for len(segs) > 1 && depMajorRe.MatchString(segs[len(segs)-1]) {
-			segs = segs[:len(segs)-1]
-		}
-		for _, name := range []string{full, segs[len(segs)-1]} {
-			if name != "" && !seen[name] {
-				seen[name] = true
-				out = append(out, name)
-			}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
 		}
 	}
 	return out

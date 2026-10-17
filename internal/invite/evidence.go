@@ -26,11 +26,23 @@ var (
 		"rip out", "eliminate", "unused"}
 	testWords = keywords{"test", "tests", "testing", "spec", "specs", "assert*", "coverage", "flaky"}
 	ciWords   = keywords{"ci", "workflow", "pipeline", "github action*"}
-	depWords  = keywords{"upgrad*", "bump", "downgrad*", "depend*", "vendor"}
+	depWords  = keywords{"upgrad*", "bump", "downgrad*", "depend*"}
 )
 
+// verbWindow is how many words from a removal verb a one-word removed name
+// may stand (R36e).
+const verbWindow = 5
+
+// minWordTerm is the fewest characters a one-word removed name needs to count
+// as naming the deletion (R36e).
+const minWordTerm = 4
+
 // match reports whether any keyword occurs in ws.
-func (ks keywords) match(ws []string) bool {
+func (ks keywords) match(ws []string) bool { return len(ks.find(ws)) > 0 }
+
+// find returns the [start, end) word spans of every keyword occurrence in ws.
+func (ks keywords) find(ws []string) [][2]int {
+	var spans [][2]int
 	stems := make([]string, len(ws))
 	for i, w := range ws {
 		stems[i] = english.Stem(w, false)
@@ -52,11 +64,11 @@ func (ks keywords) match(ws []string) bool {
 				}
 			}
 			if ok {
-				return true
+				spans = append(spans, [2]int{i, i + len(parts)})
 			}
 		}
 	}
-	return false
+	return spans
 }
 
 // words splits s into raw lowercased words on any non-letter/digit rune,
@@ -79,56 +91,84 @@ func nameWords(s string) []string {
 }
 
 // evidence reports whether one prompt (text) asks for a high-risk hunk with
-// label l in file specifically (R36b, R36c). terms are the hunk's removed
-// symbols and literals, or its dependency names (Input.Terms).
+// label l in file specifically (R36b–e). terms are the hunk's removed symbols
+// and literals, or its full dependency names (Input.Terms).
 //
-//   - deletion: a removal verb (removalVerbs) AND a whole removed term: every
-//     word of it among the prompt's words, or the term itself as a
-//     case-insensitive substring bounded by non-word runes. No term, no
+//   - deletion: the prompt names a removed term and has a removal verb
+//     (removalVerbs). A term of several words (nameWords) is named when all
+//     of its words are among the prompt's, or it occurs whole (see
+//     containsBounded), with the verb anywhere. A one-word term needs at
+//     least 4 characters and a verb within 5 words of it. No term, no
 //     evidence.
 //   - test: in a CI file (model.IsCIPath) a CI word (ciWords); in any other
 //     test file a test word (testWords).
-//   - dependency: a whole dependency name (as for deletion terms) or a
-//     dependency word (depWords).
+//   - dependency: a dependency word (depWords), or a full dependency name
+//     occurring whole, ignoring case.
 func evidence(l model.Label, file, text string, terms []string) bool {
-	ws := words(text)
 	switch l {
 	case model.LabelDeletion:
-		return removalVerbs.match(ws) && namesTerm(text, terms)
+		return namesDeletion(text, terms)
 	case model.LabelTest:
 		if model.IsCIPath(file) {
-			return ciWords.match(ws)
+			return ciWords.match(words(text))
 		}
-		return testWords.match(ws)
+		return testWords.match(words(text))
 	case model.LabelDependency:
-		return depWords.match(ws) || namesTerm(text, terms)
+		if depWords.match(words(text)) {
+			return true
+		}
+		lower := strings.ToLower(text)
+		for _, term := range terms {
+			if containsBounded(lower, strings.ToLower(term)) {
+				return true
+			}
+		}
+		return false
 	}
 	return true
 }
 
-// namesTerm reports whether the prompt text names some term whole: all of
-// the term's nameWords are among the prompt's, or the term occurs in text,
-// ignoring case, with no letter or digit on either side.
-func namesTerm(text string, terms []string) bool {
+// namesDeletion applies the deletion rule of evidence.
+func namesDeletion(text string, terms []string) bool {
+	nw := nameWords(text)
+	verbs := removalVerbs.find(nw)
+	if len(verbs) == 0 {
+		return false
+	}
 	have := map[string]bool{}
-	for _, w := range nameWords(text) {
+	for _, w := range nw {
 		have[w] = true
 	}
 	lower := strings.ToLower(text)
 	for _, term := range terms {
 		tw := nameWords(term)
-		if len(tw) == 0 {
-			continue
-		}
-		all := true
-		for _, w := range tw {
-			if !have[w] {
-				all = false
-				break
+		switch {
+		case len(tw) == 0:
+		case len(tw) == 1:
+			if len([]rune(tw[0])) < minWordTerm {
+				continue
 			}
-		}
-		if all || containsBounded(lower, strings.ToLower(term)) {
-			return true
+			for i, w := range nw {
+				if w != tw[0] {
+					continue
+				}
+				for _, v := range verbs {
+					if i >= v[0]-verbWindow && i < v[1]+verbWindow {
+						return true
+					}
+				}
+			}
+		default:
+			all := true
+			for _, w := range tw {
+				if !have[w] {
+					all = false
+					break
+				}
+			}
+			if all || containsBounded(lower, strings.ToLower(term)) {
+				return true
+			}
 		}
 	}
 	return false
