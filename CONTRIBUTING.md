@@ -1,10 +1,12 @@
 # Contributing to unasked
 
-Thanks for helping. unasked is only useful if two promises hold: it never
-misses a change you didn't ask for, and it never breaks your working tree.
-Most of this guide is about keeping them: every change in scoring comes with
-a labelled session that proves it, and every change to `--drop` or `undo`
-comes with a test that round-trips the bytes.
+Thanks for helping. unasked is only useful if two things hold: it doesn't
+miss changes you didn't ask for (zero misses on the labelled fixture set, and
+we treat any miss as the most serious kind of bug), and `--drop` and `undo`
+never leave your working tree in a state other than the one promised. Most of
+this guide is about keeping them: every change in scoring comes with a
+labelled session that proves it, and every change to `--drop` or `undo` comes
+with a test that round-trips the bytes.
 
 - [Ways to help](#ways-to-help)
 - [Reporting a wrong verdict](#reporting-a-wrong-verdict)

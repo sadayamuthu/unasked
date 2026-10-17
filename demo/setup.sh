@@ -4,13 +4,17 @@
 # the X-Request-Id response header, which the client and README still rely on.
 # The session goes through unasked's real Claude Code hooks (SessionStart, then
 # Stop), so the report uses the captured baseline, exactly as after a real run.
+#
+# Both directories are fresh `mktemp -d` directories; the script never deletes
+# anything. It prints the two paths as shell exports, so use it as:
+#   eval "$(bash demo/setup.sh)" && cd "$DEMO_REPO"
 set -e
-repo="${DEMO_REPO:-/tmp/shop}"
-export UNASKED_HOME="${UNASKED_HOME:-/tmp/agent-home}"   # stands in for ~ (~/.claude)
+repo=$(mktemp -d "${TMPDIR:-/tmp}/unasked-demo-repo.XXXXXX")
+UNASKED_HOME=$(mktemp -d "${TMPDIR:-/tmp}/unasked-demo-home.XXXXXX")   # stands in for ~ (~/.claude)
+export UNASKED_HOME
 export GIT_AUTHOR_NAME=dev GIT_AUTHOR_EMAIL=dev@example.com GIT_COMMITTER_NAME=dev GIT_COMMITTER_EMAIL=dev@example.com
 unasked="${UNASKED_BIN:-unasked}"
 
-rm -rf "$repo" "$UNASKED_HOME"
 mkdir -p "$repo/internal/api" "$repo/internal/client" "$UNASKED_HOME/.claude/projects/demo"
 cd "$repo"
 git init -q -b main
@@ -149,3 +153,5 @@ sed "s#@CWD@#$repo#g" > "$transcript" <<'EOF'
 EOF
 
 hook Stop
+
+printf "export DEMO_REPO=%q UNASKED_HOME=%q\n" "$repo" "$UNASKED_HOME"

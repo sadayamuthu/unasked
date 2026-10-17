@@ -8,7 +8,7 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 35ms
 
 Hide
-Type "bash /work/setup.sh && cd /tmp/shop && export UNASKED_HOME=/tmp/agent-home PS1='$ ' && clear" Enter
+Type `eval "$(bash /work/setup.sh)" && cd "$DEMO_REPO" && export PS1='$ ' && clear` Enter
 Sleep 1s
 Show
 
