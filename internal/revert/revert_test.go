@@ -1118,3 +1118,77 @@ func TestDropEOFNoNewlineInsertion(t *testing.T) {
 		t.Fatal("undo not byte-exact")
 	}
 }
+
+// threeFilesAndDeletion is threeFiles plus a file the agent deleted, so an
+// undo of the drop has to delete the re-created file again.
+func threeFilesAndDeletion(t *testing.T) *fixture {
+	f := newFixture(t)
+	for _, n := range []string{"a.txt", "b.txt", "c.txt", "gone.txt"} {
+		f.g.Write(n, fourLines)
+	}
+	f.setBase()
+	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
+		f.g.Write(n, "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\n")
+	}
+	if err := os.Remove(filepath.Join(f.g.Dir, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// failStep makes the nth restore step of kind ("delete" or "place") fail.
+func failStep(t *testing.T, kind string, nth int) {
+	n := 0
+	stepHook = func(k, _ string) error {
+		if k != kind {
+			return nil
+		}
+		if n++; n == nth {
+			return errors.New("injected " + kind + " failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { stepHook = nil })
+}
+
+// An undo whose second rename into place fails rolls every completed
+// rename back, puts the file it was deleting back, and names the snapshot.
+func TestUndoPlaceFailureRollsBack(t *testing.T) {
+	for _, tc := range []struct{ kind string }{{"place"}, {"delete"}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			f := threeFilesAndDeletion(t)
+			cur := f.scored(nil)
+			before := f.state()
+			if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+				t.Fatal(err)
+			}
+			dropped := f.state()
+			if _, ok := dropped["gone.txt"]; !ok {
+				t.Fatal("drop did not re-create gone.txt")
+			}
+			list, err := ListSnapshots(f.r)
+			if err != nil || len(list) == 0 {
+				t.Fatalf("list %v %v", list, err)
+			}
+			nth := 2
+			if tc.kind == "delete" {
+				nth = 1
+			}
+			failStep(t, tc.kind, nth)
+			err = Undo(f.r, "", false)
+			if err == nil || !strings.Contains(err.Error(), "injected "+tc.kind+" failure") || !strings.Contains(err.Error(), list[0].ID) {
+				t.Fatalf("err = %v, want the injected failure naming snapshot %s", err, list[0].ID)
+			}
+			if !sameState(dropped, f.state()) {
+				t.Fatalf("failed undo left a partly restored tree (or temp files):\n%v\nwant\n%v", f.state(), dropped)
+			}
+			stepHook = nil
+			if err := Undo(f.r, "", false); err != nil {
+				t.Fatal(err)
+			}
+			if !sameState(before, f.state()) {
+				t.Fatal("undo not byte-exact")
+			}
+		})
+	}
+}

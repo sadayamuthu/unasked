@@ -220,23 +220,59 @@ func current(work, p string) (b []byte, ok bool, err error) {
 // restoreHook, when set by tests, runs before each file is staged by restore.
 var restoreHook func(path string) error
 
-// restore puts the snapshot back in two phases. Phase one writes every file
-// to a temp file beside its target with the recorded mode and checks its
-// sha256; any failure removes the temps (and directories it made), leaving
-// the tree untouched. Phase two removes files that were absent and renames
-// every temp over its target. Finally every sha256 is re-checked.
+// stepHook, when set by tests, runs before each delete ("delete") and each
+// rename into place ("place") by restore.
+var stepHook func(kind, path string) error
+
+// restore puts the snapshot back in two phases, so a failure anywhere
+// leaves the tree exactly as it was before restore ran.
+//
+// Phase one writes every file to a temp file beside its target with the
+// recorded mode and checks its sha256, and moves every file that was absent
+// aside to a sibling ".<name>.unasked-del-*". Any failure moves those back
+// and removes the temps (and directories it made).
+//
+// Phase two moves each existing target aside to ".<name>.unasked-old-*" and
+// renames its temp into place. On any failure, or when the final sha256
+// check fails, every completed rename is rolled back (originals and deleted
+// files return from their aside names) and the error names the snapshot.
+// Only after the check passes are the aside copies removed.
 func (s *snapshot) restore(work string) error {
 	type staged struct{ tmp, dst string }
+	type aside struct{ orig, tmp string }
 	var temps []staged
+	var deleted, replaced []aside
 	var madeDirs []string
-	abort := func(err error) error {
+	var placed []string
+	// rollback undoes every move made so far, newest first. Errors are
+	// collected: a file it cannot move back stays under its aside name.
+	rollback := func() error {
+		var errs []error
+		for i := len(placed) - 1; i >= 0; i-- {
+			if err := os.Remove(placed[i]); err != nil && !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+			}
+		}
+		for _, list := range [][]aside{replaced, deleted} {
+			for i := len(list) - 1; i >= 0; i-- {
+				if err := os.Rename(list[i].tmp, list[i].orig); err != nil {
+					errs = append(errs, fmt.Errorf("%s is left at %s: %w", list[i].orig, list[i].tmp, err))
+				}
+			}
+		}
 		for _, t := range temps {
 			os.Remove(t.tmp)
 		}
 		for _, d := range madeDirs {
 			os.Remove(d)
 		}
-		return err
+		return errors.Join(errs...)
+	}
+	abort := func(err error) error {
+		if rerr := rollback(); rerr != nil {
+			return fmt.Errorf("restore of snapshot %s failed: %w; rolling back also failed: %v", s.id, err, rerr)
+		}
+		return fmt.Errorf("restore of snapshot %s failed and was rolled back: %w", s.id, err)
 	}
 	for _, e := range s.m.Files {
 		if e.Absent {
@@ -269,40 +305,94 @@ func (s *snapshot) restore(work string) error {
 			return abort(fmt.Errorf("staging %s did not verify: %v", e.Path, err))
 		}
 	}
-	var errs []error
 	for _, e := range s.m.Files {
 		if !e.Absent {
 			continue
 		}
-		if err := os.Remove(workPath(work, e.Path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, err)
+		full := workPath(work, e.Path)
+		st, err := os.Lstat(full)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
 		}
-		for _, d := range e.NewDirs {
-			os.Remove(workPath(work, d)) // only succeeds when empty
+		if err != nil {
+			return abort(err)
 		}
-	}
-	for i, t := range temps {
-		if err := os.Rename(t.tmp, t.dst); err != nil {
-			errs = append(errs, err)
-			for _, rest := range temps[i+1:] {
-				os.Remove(rest.tmp)
+		if st.IsDir() {
+			return abort(fmt.Errorf("%s is a directory", e.Path))
+		}
+		if stepHook != nil {
+			if err := stepHook("delete", e.Path); err != nil {
+				return abort(err)
 			}
-			break
 		}
+		tmp, err := moveAside(full, "del")
+		if err != nil {
+			return abort(err)
+		}
+		deleted = append(deleted, aside{full, tmp})
 	}
-	if err := errors.Join(errs...); err != nil {
-		return err
+	for _, t := range temps {
+		if stepHook != nil {
+			if err := stepHook("place", t.dst); err != nil {
+				return abort(err)
+			}
+		}
+		if _, err := os.Lstat(t.dst); err == nil {
+			tmp, err := moveAside(t.dst, "old")
+			if err != nil {
+				return abort(err)
+			}
+			replaced = append(replaced, aside{t.dst, tmp})
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return abort(err)
+		}
+		if err := os.Rename(t.tmp, t.dst); err != nil {
+			return abort(err)
+		}
+		placed = append(placed, t.dst)
 	}
 	for _, e := range s.m.Files {
 		b, ok, err := current(work, e.Path)
 		switch {
 		case err != nil:
-			return err
+			return abort(err)
 		case ok == e.Absent || (ok && sum(b) != e.SHA256):
-			return fmt.Errorf("%s does not match the snapshot after restore", e.Path)
+			return abort(fmt.Errorf("%s does not match the snapshot after restore", e.Path))
+		}
+	}
+	for _, list := range [][]aside{replaced, deleted} {
+		for _, a := range list {
+			os.Remove(a.tmp)
+		}
+	}
+	for _, e := range s.m.Files {
+		if e.Absent {
+			for _, d := range e.NewDirs {
+				os.Remove(workPath(work, d)) // only succeeds when empty
+			}
 		}
 	}
 	return nil
+}
+
+// moveAside renames p to a new sibling ".<name>.unasked-<kind>-*" and
+// returns that name.
+func moveAside(p, kind string) (string, error) {
+	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".unasked-"+kind+"-*")
+	if err != nil {
+		return "", err
+	}
+	tmp := f.Name()
+	f.Close()
+	if err := os.Rename(p, tmp); err != nil {
+		// Windows cannot rename over an existing file that is open; the
+		// placeholder is ours and empty, so clear it and try once more.
+		os.Remove(tmp)
+		if err := os.Rename(p, tmp); err != nil {
+			return "", err
+		}
+	}
+	return tmp, nil
 }
 
 // mkdirTracked creates dir and missing parents, returning the ones it made,
