@@ -211,3 +211,34 @@ func TestFindByCwdAcrossDateDirs(t *testing.T) {
 		t.Error("name/level")
 	}
 }
+
+func TestPatchPathsRelativeToSessionCwd(t *testing.T) {
+	repo := t.TempDir()
+	sub := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := json.Marshal(sub)
+	m := `{"type":"session_meta","payload":{"cwd":` + string(q) + `,"cli_version":"0.99.0"}}` + "\n"
+	abs := filepath.Join(repo, "top.go")
+	patch := "*** Begin Patch\n*** Update File: fetch.go\n+a\n*** Update File: ./x.go\n+b\n*** Add File: " + abs + "\n+c\n*** Update File: ../up.go\n+d\n*** End Patch"
+	pq, _ := json.Marshal(patch)
+	custom := `{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":` + string(pq) + `}}` + "\n"
+	tr, _ := capture(t, m+prompt("go")+custom)
+	var files []string
+	for _, e := range tr.Edits {
+		files = append(files, e.File)
+	}
+	if strings.Join(files, ",") != "pkg/fetch.go,pkg/x.go,top.go,up.go" {
+		t.Errorf("files = %v", files)
+	}
+	// function-form apply_patch: arguments JSON with "input"
+	args, _ := json.Marshal(map[string]string{"input": "*** Begin Patch\n*** Update File: fetch.go\n+z\n*** End Patch"})
+	tr, _ = capture(t, m+prompt("go")+fcall("apply_patch", string(args)))
+	if len(tr.Edits) != 1 || tr.Edits[0].File != "pkg/fetch.go" || tr.Edits[0].After != "z" {
+		t.Errorf("edits = %+v", tr.Edits)
+	}
+}

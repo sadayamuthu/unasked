@@ -276,12 +276,18 @@ func skipBlock(text string) bool {
 	return false
 }
 
-// relative makes p repo-relative with forward slashes when it lies inside the
-// repo containing the session cwd; other paths are returned unchanged.
+// relative makes p repo-relative with forward slashes. Codex patch paths are
+// relative to the session cwd, so a relative p is joined with cwd first. Paths
+// resolving outside the repo are returned cleaned (and absolute when cwd is
+// known); they will not intersect the diff.
 func (st *state) relative(p string) string {
-	if st.cwd == "" || !filepath.IsAbs(p) {
-		return filepath.ToSlash(p)
+	if st.cwd == "" {
+		return filepath.ToSlash(filepath.Clean(p))
 	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(st.cwd, p)
+	}
+	p = filepath.Clean(p)
 	root, ok := st.roots[st.cwd]
 	if !ok {
 		root = repoRoot(st.cwd)
@@ -289,7 +295,7 @@ func (st *state) relative(p string) string {
 	}
 	rel, err := filepath.Rel(root, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return p
+		return filepath.ToSlash(p)
 	}
 	return filepath.ToSlash(rel)
 }
