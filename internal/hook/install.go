@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/sadayamuthu/unasked/internal/report"
 )
@@ -98,11 +99,17 @@ func command(bin, agent string, windows bool) string {
 	return quote(bin, windows) + marker + agent
 }
 
-// quote makes bin one shell word. Windows paths are double-quoted (cmd,
-// PowerShell and Git Bash all accept that); POSIX paths are single-quoted
-// unless they need no quoting.
+// quote makes bin one shell word. POSIX paths are single-quoted unless they
+// need no quoting. A Windows path is written bare when it needs no quoting:
+// a quoted path is a string, not a command, to PowerShell (it needs "& "),
+// while cmd and Git Bash run either. Only a path with spaces or shell
+// metacharacters is double-quoted, which PowerShell hosts cannot run; doctor
+// warns about such a path (WindowsPathWarning).
 func quote(bin string, windows bool) string {
 	if windows {
+		if windowsSafe(bin) {
+			return bin
+		}
 		return `"` + bin + `"`
 	}
 	safe := bin != ""
@@ -116,6 +123,29 @@ func quote(bin string, windows bool) string {
 		return bin
 	}
 	return "'" + strings.ReplaceAll(bin, "'", `'\''`) + "'"
+}
+
+// windowsSafe reports whether a Windows path is one word to cmd, PowerShell
+// and Git Bash alike: letters, digits and \ / . _ - : only.
+func windowsSafe(bin string) bool {
+	if bin == "" {
+		return false
+	}
+	for _, c := range bin {
+		if !(unicode.IsLetter(c) || unicode.IsDigit(c) || strings.ContainsRune(`\/._-:`, c)) {
+			return false
+		}
+	}
+	return true
+}
+
+// WindowsPathWarning is doctor's warning for a binary path the Windows hook
+// command has to quote, or "".
+func WindowsPathWarning(bin string) string {
+	if windowsSafe(bin) {
+		return ""
+	}
+	return "binary path contains spaces; install unasked to a path without spaces for Windows hooks"
 }
 
 // Install merges s's hook entries for bin into its config file. The original

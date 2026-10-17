@@ -15,6 +15,7 @@ import (
 
 	"github.com/sadayamuthu/unasked/internal/adapter"
 	"github.com/sadayamuthu/unasked/internal/gitx"
+	"github.com/sadayamuthu/unasked/internal/hook"
 	"github.com/sadayamuthu/unasked/internal/model"
 	"github.com/sadayamuthu/unasked/internal/report"
 )
@@ -58,6 +59,11 @@ func runDoctor(args []string, dir string, stdout io.Writer) (int, error) {
 	}
 	if runtime.GOOS == "windows" {
 		fmt.Fprintln(stdout, "note: captured transcripts use default file permissions on Windows")
+		if bin, err := hook.Bin(); err == nil {
+			if w := hook.WindowsPathWarning(bin); w != "" {
+				fmt.Fprintln(stdout, "warning: "+w)
+			}
+		}
 	}
 	return model.ExitClean, nil
 }

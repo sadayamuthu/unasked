@@ -254,12 +254,22 @@ func TestCommandQuoting(t *testing.T) {
 		"/My Tools/unasked":  "'/My Tools/unasked' hook run --agent codex",
 		"/it's/unasked":      `'/it'\''s/unasked' hook run --agent codex`,
 		`C:\Program Files\u`: `"C:\Program Files\u" hook run --agent codex`,
+		// PowerShell does not run a quoted path without "&": a path that
+		// needs no quoting is written bare (I7).
+		`C:\Users\me\go\bin\unasked.exe`: `C:\Users\me\go\bin\unasked.exe hook run --agent codex`,
+		`C:\a&b\unasked.exe`:             `"C:\a&b\unasked.exe" hook run --agent codex`,
 	}
 	for bin, want := range cases {
 		windows := strings.Contains(bin, `\`)
 		if got := command(bin, "codex", windows); got != want {
 			t.Errorf("command(%q) = %q, want %q", bin, got, want)
 		}
+	}
+	if w := WindowsPathWarning(`C:\Program Files\u`); w != "binary path contains spaces; install unasked to a path without spaces for Windows hooks" {
+		t.Errorf("warning %q", w)
+	}
+	if w := WindowsPathWarning(`C:\Users\me\go\bin\unasked.exe`); w != "" {
+		t.Errorf("warning for a safe path: %q", w)
 	}
 }
 
