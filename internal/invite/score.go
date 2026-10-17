@@ -92,15 +92,15 @@ func Overlap(a, b []string, w map[string]float64) float64 {
 
 // Input is everything Score needs. Classify supplies each hunk's label and
 // whether it is high-risk (deletion, test, dependency); it is called exactly
-// once per hunk. Terms supplies a high-risk hunk's specific names (removed
-// symbols and literals, dependency names; see evidence); it may be nil (no
-// names). Tells may be nil (no tell fires).
+// once per hunk. Terms supplies a high-risk hunk's specific names given its
+// label (removed symbols and literals, dependency names; see evidence); it
+// may be nil (no names). Tells may be nil (no tell fires).
 type Input struct {
 	Hunks      []model.Hunk
 	Transcript *model.Transcript
 	Classify   func(model.Hunk) (model.Label, bool /*highRisk*/)
 	Th         Thresholds
-	Terms      func(model.Hunk) []string
+	Terms      func(model.Hunk, model.Label) []string
 	Tells      *Tells
 	DiffOnly   bool
 }
@@ -168,13 +168,13 @@ func Score(in Input) []model.Scored {
 		}
 		var terms []string
 		if s.HighRisk && in.Terms != nil {
-			terms = in.Terms(h)
+			terms = in.Terms(h, s.Label)
 		}
 		asked, askedTurn := 0.0, 0
 		for j, p := range prompts {
 			o := Overlap(hunkToks[i], p.toks, w)
 			s.Asked = max(s.Asked, o)
-			if s.HighRisk && o >= in.Th.Invite-capMargin && !evidence(s.Label, p.text, p.toks, terms, hunkToks[i], w) {
+			if s.HighRisk && o >= in.Th.Invite-capMargin && !evidence(s.Label, h.File, p.text, terms) {
 				o = in.Th.Invite - capMargin
 			}
 			if o > asked || j == 0 {

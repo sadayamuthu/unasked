@@ -1,8 +1,8 @@
 package invite
 
 import (
-	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kljensen/snowball/english"
 	"github.com/sadayamuthu/unasked/internal/model"
@@ -15,40 +15,38 @@ const genericReason = "asked: generic overlap only"
 // capMargin is how far below Invite the evidence cap holds an asked score.
 const capMargin = 0.01
 
-// keywords match a prompt word by stem ("tests" → test) or, for an entry
-// ending in "*", by prefix of the lowercased word ("deprecated" → deprecat*).
-// An entry with spaces is a phrase of consecutive words, each by stem.
+// keywords match prompt words (see words). An entry is one or more
+// space-separated parts matched against consecutive words: a part ending in
+// "*" matches a word with that prefix ("deprecat*" → deprecated); any other
+// part matches a word with the same Snowball stem ("tests" → test).
 type keywords []string
 
 var (
-	removalVerbs = keywords{"remove", "delete", "drop", "deprecat*", "strip", "get rid of", "clean out"}
-	testWords    = keywords{"test", "tests", "spec", "assert*", "ci", "workflow", "pipeline", "coverage", "flaky"}
-	depWords     = keywords{"depend*", "package", "librar*", "upgrad*", "bump", "install", "version", "module"}
+	removalVerbs = keywords{"remove", "delete", "drop", "deprecat*", "strip", "get rid of", "clean out",
+		"rip out", "eliminate", "unused"}
+	testWords = keywords{"test", "tests", "testing", "spec", "specs", "assert*", "coverage", "flaky"}
+	ciWords   = keywords{"ci", "workflow", "pipeline", "github action*"}
+	depWords  = keywords{"upgrad*", "bump", "downgrad*", "depend*", "vendor"}
 )
 
-// match reports whether any keyword occurs in words (lowercased, unstemmed).
-func (ks keywords) match(words []string) bool {
-	stems := make([]string, len(words))
-	for i, w := range words {
+// match reports whether any keyword occurs in ws.
+func (ks keywords) match(ws []string) bool {
+	stems := make([]string, len(ws))
+	for i, w := range ws {
 		stems[i] = english.Stem(w, false)
 	}
+	partMatch := func(part string, i int) bool {
+		if p, ok := strings.CutSuffix(part, "*"); ok {
+			return strings.HasPrefix(ws[i], p)
+		}
+		return stems[i] == english.Stem(part, false)
+	}
 	for _, k := range ks {
-		if p, ok := strings.CutSuffix(k, "*"); ok {
-			for _, w := range words {
-				if strings.HasPrefix(w, p) {
-					return true
-				}
-			}
-			continue
-		}
-		phrase := strings.Fields(k)
-		for i := range phrase {
-			phrase[i] = english.Stem(phrase[i], false)
-		}
-		for i := 0; i+len(phrase) <= len(stems); i++ {
+		parts := strings.Fields(k)
+		for i := 0; i+len(parts) <= len(ws); i++ {
 			ok := true
-			for j, p := range phrase {
-				if stems[i+j] != p {
+			for j, p := range parts {
+				if !partMatch(p, i+j) {
 					ok = false
 					break
 				}
@@ -61,81 +59,96 @@ func (ks keywords) match(words []string) bool {
 	return false
 }
 
-// words splits s into lowercased words on any non-letter/digit rune.
+// words splits s into raw lowercased words on any non-letter/digit rune,
+// keeping one-character words and stop words ("GitHub Actions" → github,
+// actions). Keywords match these.
 func words(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), notWordRune)
 }
 
-// evidence reports whether prompt text (tokens toks) asks for a high-risk
-// hunk specifically (R36). terms are the hunk's specific names (Input.Terms),
-// hunkToks its tokens and w the IDF weights.
-//
-//   - deletion: the prompt has every token of some term; or it has a removal
-//     verb and a token of some term weighing more than the median weight of
-//     the hunk's distinct tokens.
-//   - test: the prompt has a test word (testWords).
-//   - dependency: the prompt has a dependency word (depWords) or every token
-//     of some term (a dependency name).
-func evidence(l model.Label, text string, toks, terms, hunkToks []string, w map[string]float64) bool {
-	ws := words(text)
-	have := toTokenSet(toks)
-	allOf := func() bool {
-		for _, term := range terms {
-			tt := Tokens(term)
-			if len(tt) == 0 {
-				continue
-			}
-			all := true
-			for _, t := range tt {
-				if !have[t] {
-					all = false
-					break
-				}
-			}
-			if all {
-				return true
-			}
+// nameWords is words with CamelCase runs split too, for matching names
+// ("X-Request-Id" → x, request, id; "legacyPing" → legacy, ping).
+func nameWords(s string) []string {
+	var out []string
+	for _, chunk := range strings.FieldsFunc(s, notWordRune) {
+		for _, w := range splitCamel(chunk) {
+			out = append(out, strings.ToLower(w))
 		}
-		return false
 	}
+	return out
+}
+
+// evidence reports whether one prompt (text) asks for a high-risk hunk with
+// label l in file specifically (R36b, R36c). terms are the hunk's removed
+// symbols and literals, or its dependency names (Input.Terms).
+//
+//   - deletion: a removal verb (removalVerbs) AND a whole removed term: every
+//     word of it among the prompt's words, or the term itself as a
+//     case-insensitive substring bounded by non-word runes. No term, no
+//     evidence.
+//   - test: in a CI file (model.IsCIPath) a CI word (ciWords); in any other
+//     test file a test word (testWords).
+//   - dependency: a whole dependency name (as for deletion terms) or a
+//     dependency word (depWords).
+func evidence(l model.Label, file, text string, terms []string) bool {
+	ws := words(text)
 	switch l {
 	case model.LabelDeletion:
-		if allOf() {
-			return true
-		}
-		if !removalVerbs.match(ws) {
-			return false
-		}
-		med := medianWeight(hunkToks, w)
-		for _, term := range terms {
-			for _, t := range Tokens(term) {
-				if have[t] && w[t] > med {
-					return true
-				}
-			}
-		}
-		return false
+		return removalVerbs.match(ws) && namesTerm(text, terms)
 	case model.LabelTest:
+		if model.IsCIPath(file) {
+			return ciWords.match(ws)
+		}
 		return testWords.match(ws)
 	case model.LabelDependency:
-		return depWords.match(ws) || allOf()
+		return depWords.match(ws) || namesTerm(text, terms)
 	}
 	return true
 }
 
-// medianWeight is the median IDF weight of the distinct tokens in toks.
-func medianWeight(toks []string, w map[string]float64) float64 {
-	var ws []float64
-	for t := range toTokenSet(toks) {
-		ws = append(ws, w[t])
+// namesTerm reports whether the prompt text names some term whole: all of
+// the term's nameWords are among the prompt's, or the term occurs in text,
+// ignoring case, with no letter or digit on either side.
+func namesTerm(text string, terms []string) bool {
+	have := map[string]bool{}
+	for _, w := range nameWords(text) {
+		have[w] = true
 	}
-	if len(ws) == 0 {
-		return 0
+	lower := strings.ToLower(text)
+	for _, term := range terms {
+		tw := nameWords(term)
+		if len(tw) == 0 {
+			continue
+		}
+		all := true
+		for _, w := range tw {
+			if !have[w] {
+				all = false
+				break
+			}
+		}
+		if all || containsBounded(lower, strings.ToLower(term)) {
+			return true
+		}
 	}
-	sort.Float64s(ws)
-	n := len(ws)
-	if n%2 == 1 {
-		return ws[n/2]
+	return false
+}
+
+// containsBounded reports whether sub occurs in s with no letter or digit
+// immediately before or after it.
+func containsBounded(s, sub string) bool {
+	for i := 0; sub != ""; {
+		j := strings.Index(s[i:], sub)
+		if j < 0 {
+			return false
+		}
+		j += i
+		before, _ := utf8.DecodeLastRuneInString(s[:j])
+		after, _ := utf8.DecodeRuneInString(s[j+len(sub):])
+		if (j == 0 || notWordRune(before)) && (j+len(sub) == len(s) || notWordRune(after)) {
+			return true
+		}
+		i = j + 1
 	}
-	return (ws[n/2-1] + ws[n/2]) / 2
+	return false
 }

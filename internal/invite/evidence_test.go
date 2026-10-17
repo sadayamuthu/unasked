@@ -11,8 +11,10 @@ import (
 const realisticPrompt = "Add rate limiting to the public API: 60 requests per minute per client, answer 429 with a Retry-After header"
 
 // TestHighRiskNeedsSpecificEvidence: Test 1 invites a high-risk hunk only when
-// some single prompt names it specifically (R36); generic shared words are
-// capped below Invite for the verdict, while Asked keeps the raw score.
+// a single prompt names it specifically (R36b, R36c); generic shared words
+// are capped below Invite for the verdict, while Asked keeps the raw score.
+// Rows marked capped have a raw asked score at or above Invite, so the cap
+// itself decides them.
 func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 	xreq := model.Hunk{ID: "h01", File: "internal/api/headers.go",
 		Removed: []string{`		w.Header().Set("X-Request-Id", id)`},
@@ -20,6 +22,9 @@ func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 	ping := model.Hunk{ID: "h01", File: "internal/server/health.go",
 		Removed: []string{"func legacyPing(w http.ResponseWriter, r *http.Request) {", `	w.Write([]byte("pong"))`, "}"},
 		Symbols: model.SymbolDelta{Removed: []string{"legacyPing"}}}
+	flush := model.Hunk{ID: "h01", File: "internal/store/store.go",
+		Removed: []string{"\tcache.Flush()"},
+		Symbols: model.SymbolDelta{Enclosing: "Close"}}
 	assertEdit := model.Hunk{ID: "h01", File: "internal/parser/parser_test.go",
 		Removed: []string{`	if got := Parse(input); got != "nested \"quotes\"" {`},
 		Added:   []string{`	if got := Parse(input); got == "" {`},
@@ -28,27 +33,40 @@ func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 		Added: []string{"func TestParseNestedQuotes(t *testing.T) {", `	if got := Parse(input); got != "nested \"quotes\"" {`,
 			`		t.Errorf("parser nested quotes: got %q", got)`, "	}", "}"},
 		Symbols: model.SymbolDelta{Added: []string{"TestParseNestedQuotes"}}}
+	ciRace := model.Hunk{ID: "h01", File: ".github/workflows/ci.yml",
+		Removed: []string{"      - run: go test ./parser/..."}, Added: []string{"      - run: go test -race ./parser/..."}}
 	zap := model.Hunk{ID: "h01", File: "go.mod",
 		Removed: []string{"	go.uber.org/zap v1.26.0"}, Added: []string{"	go.uber.org/zap v1.27.0"}}
-	limiterDep := model.Hunk{ID: "h01", File: "go.mod",
-		Added: []string{"	github.com/ulule/limiter/v3 v3.11.2 // rate limit middleware"}}
+	xtime := model.Hunk{ID: "h01", File: "go.mod", Added: []string{"	golang.org/x/time v0.5.0 // rate limit package"}}
 
-	th := Default
+	th := Thresholds{Invite: 0.30, Low: 0.15}
+	const generic = "asked: generic overlap only"
 	cases := []struct {
 		name   string
 		prompt string
 		h      model.Hunk
 		label  model.Label
 		want   model.Verdict
-		reason string
+		capped bool // raw asked >= Invite; reason "asked: generic overlap only"
 	}{
-		{"realistic prompt, X-Request-Id deletion", realisticPrompt, xreq, model.LabelDeletion, model.VerdictUnasked, "asked: generic overlap only"},
-		{"named removal of X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictInvited, "asked: turn 1"},
-		{"delete legacyPing", "delete legacyPing from the health server", ping, model.LabelDeletion, model.VerdictInvited, "asked: turn 1"},
-		{"bug fix, test assertion edit", "fix the parser bug with nested quotes", assertEdit, model.LabelTest, model.VerdictUnasked, ""},
-		{"add tests, test edit", "add tests for the parser nested quotes", newTest, model.LabelTest, model.VerdictInvited, "asked: turn 1"},
-		{"bump zap, go.mod change", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictInvited, "asked: turn 1"},
-		{"rate-limit prompt, go.mod change", realisticPrompt, limiterDep, model.LabelDependency, model.VerdictUnasked, ""},
+		// deletion (R36b)
+		{"realistic prompt, X-Request-Id deletion", realisticPrompt, xreq, model.LabelDeletion, model.VerdictUnasked, true},
+		{"log the request id", "Log the request id of every rate limited request with the client address", xreq, model.LabelDeletion, model.VerdictUnasked, false},
+		{"request id in error body", "Add the request id to the error response body for support tickets", xreq, model.LabelDeletion, model.VerdictUnasked, false},
+		{"named removal of X-Request-Id", "remove the deprecated X-Request-Id header", xreq, model.LabelDeletion, model.VerdictInvited, false},
+		{"delete legacyPing", "delete legacyPing from the health server", ping, model.LabelDeletion, model.VerdictInvited, false},
+		{"connection leak, cache.Flush removal", "Fix the connection leak in store Close when the cache is full", flush, model.LabelDeletion, model.VerdictUnasked, true},
+		{"Close returns error, cache.Flush removal", "Make Close return the error from closing the cache store", flush, model.LabelDeletion, model.VerdictUnasked, true},
+		// test (R36c)
+		{"bug fix, test assertion edit", "fix the parser bug with nested quotes", assertEdit, model.LabelTest, model.VerdictUnasked, true},
+		{"add tests, test edit", "add tests for the parser nested quotes", newTest, model.LabelTest, model.VerdictInvited, false},
+		{"test word, CI file", "run the parser tests with the race detector", ciRace, model.LabelTest, model.VerdictUnasked, true},
+		{"CI word, CI file", "add the race detector to the parser CI workflow", ciRace, model.LabelTest, model.VerdictInvited, false},
+		// dependency (R36c)
+		{"bump zap, go.mod change", "bump zap to 1.27 in go.mod", zap, model.LabelDependency, model.VerdictInvited, false},
+		{"rate-limit prompt, new dependency", realisticPrompt, xtime, model.LabelDependency, model.VerdictUnasked, false},
+		{"ratelimit package, new dependency", "add a rate limit package to the api server", xtime, model.LabelDependency, model.VerdictUnasked, true},
+		{"ratelimit package naming the dependency", "add a rate limit package to the api server using golang.org/x/time", xtime, model.LabelDependency, model.VerdictInvited, false},
 	}
 	for _, c := range cases {
 		tr := &model.Transcript{
@@ -60,11 +78,16 @@ func TestHighRiskNeedsSpecificEvidence(t *testing.T) {
 		if got.Label != c.label || !got.HighRisk {
 			t.Errorf("%s: label = %s (high-risk %v), want %s", c.name, got.Label, got.HighRisk, c.label)
 		}
-		if got.Verdict != c.want || (c.reason != "" && got.Reason != c.reason) {
-			t.Errorf("%s: verdict = %s (%q), asked %.2f; want %s (%q)", c.name, got.Verdict, got.Reason, got.Asked, c.want, c.reason)
+		if got.Verdict != c.want {
+			t.Errorf("%s: verdict = %s (%q), asked %.2f; want %s", c.name, got.Verdict, got.Reason, got.Asked, c.want)
 		}
-		if c.reason == "asked: generic overlap only" && got.Asked < th.Invite {
-			t.Errorf("%s: Asked = %.2f, want the raw score >= Invite %.2f (the cap is for the verdict only)", c.name, got.Asked, th.Invite)
+		switch {
+		case c.want == model.VerdictInvited && got.Reason != "asked: turn 1":
+			t.Errorf("%s: reason = %q, want %q", c.name, got.Reason, "asked: turn 1")
+		case c.capped && (got.Asked < th.Invite || got.Reason != generic):
+			t.Errorf("%s: asked %.2f reason %q; want raw asked >= %.2f (the cap decides) and %q", c.name, got.Asked, got.Reason, th.Invite, generic)
+		case c.want == model.VerdictUnasked && !c.capped && got.Reason == generic:
+			t.Errorf("%s: reason %q but the row is not marked capped (asked %.2f)", c.name, got.Reason, got.Asked)
 		}
 	}
 }
@@ -95,14 +118,25 @@ func TestKeywordsMatch(t *testing.T) {
 		{removalVerbs, "Removing the ping route", true},
 		{removalVerbs, "the header is deprecated now", true},
 		{removalVerbs, "get rid of the ping route", true},
+		{removalVerbs, "rip out the ping route", true},
+		{removalVerbs, "eliminate the ping route", true},
+		{removalVerbs, "the ping route is unused", true},
 		{removalVerbs, "get the ping route rid", false},
 		{removalVerbs, "add rate limiting to the api", false},
 		{testWords, "the assertions are wrong", true},
-		{testWords, "CI is red", true},
+		{testWords, "more testing please", true},
 		{testWords, "fix the flaky one", true},
 		{testWords, "the latest parser", false},
-		{depWords, "upgrading the http library", true},
-		{depWords, "add rate limiting", false},
+		{testWords, "CI is red", false},
+		{ciWords, "CI is red", true},
+		{ciWords, "fix the GitHub Actions job", true},
+		{ciWords, "the release pipelines", true},
+		{ciWords, "add more tests", false},
+		{depWords, "upgrading the http client", true},
+		{depWords, "downgrade it", true},
+		{depWords, "vendor the module", true},
+		{depWords, "add a rate limit package", false},
+		{depWords, "install the library at version 2", false},
 	} {
 		if got := c.ks.match(words(c.text)); got != c.want {
 			t.Errorf("%q: match = %v, want %v", c.text, got, c.want)
@@ -110,26 +144,35 @@ func TestKeywordsMatch(t *testing.T) {
 	}
 }
 
-// A removal verb plus one removed-name token rarer than the hunk's median
-// token is evidence; a common token is not.
-func TestDeletionVerbAndRareToken(t *testing.T) {
-	hunkToks := []string{"legaci", "ping", "http", "respons", "writer", "request"}
-	w := map[string]float64{"legaci": 2, "ping": 1.5, "http": 0.2, "respons": 0.3, "writer": 0.3, "request": 0.4}
-	terms := []string{"legacyPing"}
+func TestEvidence(t *testing.T) {
 	for _, c := range []struct {
+		l      model.Label
+		file   string
 		prompt string
+		terms  []string
 		want   bool
 	}{
-		{"remove the old ping handler from the server", true},
-		{"the old ping handler from the server is slow", false},
-		{"remove the http request writer from the server", false},
+		{model.LabelDeletion, "a.go", "remove the deprecated X-Request-Id header", []string{"X-Request-Id"}, true},
+		{model.LabelDeletion, "a.go", "remove the request id header", []string{"X-Request-Id"}, false},  // "x" is part of the name
+		{model.LabelDeletion, "a.go", "X-Request-Id is fine, keep it", []string{"X-Request-Id"}, false}, // no removal verb
+		{model.LabelDeletion, "a.go", "drop the /v1/users route", []string{"/v1/users"}, true},
+		{model.LabelDeletion, "a.go", "delete legacyPing", []string{"legacyPing"}, true},
+		{model.LabelDeletion, "a.go", "delete the legacy ping handler", []string{"legacyPing"}, true},
+		{model.LabelDeletion, "a.go", "delete the ping handler", []string{"legacyPing"}, false},
+		{model.LabelDeletion, "a.go", "remove everything from Close", nil, false}, // no removed term
+		{model.LabelTest, "a_test.go", "add tests", nil, true},
+		{model.LabelTest, ".github/workflows/ci.yml", "add tests", nil, false},
+		{model.LabelTest, ".github/workflows/ci.yml", "fix CI", nil, true},
+		{model.LabelDependency, "go.mod", "use zap for logging", []string{"go.uber.org/zap", "zap"}, true},
+		{model.LabelDependency, "go.mod", "use go.uber.org/zap for logging", []string{"go.uber.org/zap", "zap"}, true},
+		{model.LabelDependency, "go.mod", "add a logging package", []string{"go.uber.org/zap", "zap"}, false},
+		{model.LabelDependency, "go.mod", "bump everything", nil, true},
 	} {
-		if got := evidence(model.LabelDeletion, c.prompt, Tokens(c.prompt), terms, hunkToks, w); got != c.want {
-			t.Errorf("%q: evidence = %v, want %v", c.prompt, got, c.want)
+		if got := evidence(c.l, c.file, c.prompt, c.terms); got != c.want {
+			t.Errorf("%s %s %q %q: evidence = %v, want %v", c.l, c.file, c.prompt, c.terms, got, c.want)
 		}
 	}
-	w["ping"] = 0.3 // at or below the median (0.35): too common to count
-	if evidence(model.LabelDeletion, "remove the old ping handler", Tokens("remove the old ping handler"), terms, hunkToks, w) {
-		t.Error("common token counted as evidence")
+	if !containsBounded("drop /v1/users now", "/v1/users") || containsBounded("drop /v1/users2", "/v1/users") {
+		t.Error("containsBounded")
 	}
 }

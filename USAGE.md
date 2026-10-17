@@ -195,13 +195,15 @@ compares what the agent said before the edit with your prompts. A hunk is
 when the better score is at least the low threshold, and `unasked` otherwise.
 High-risk hunks are stricter: only Test 1, your own words, can invite them,
 and if it doesn't they are `unasked`. Shared words alone aren't enough: one
-prompt must name the change specifically. For a deletion, that means every
-word of a removed name (`remove the X-Request-Id header`), or a removal verb
-plus one of its rarer words; for a test or CI change, a word like `test`,
-`assert`, `CI` or `coverage`; for a dependency change, a word like `bump`,
-`upgrade` or `dependency`, or the dependency's name. Otherwise the hunk is
-`unasked` with reason `asked: generic overlap only`, while `asked` still shows
-the raw score. When there is no transcript or no
+prompt must name the change specifically. For a deletion, that means a
+removal verb (`remove`, `delete`, `drop`, `deprecate`, ...) together with the
+whole removed name (`remove the X-Request-Id header`); a deletion with no
+removed name or string to quote can't be invited by your words at all. For a
+test file, a word like `test`, `spec`, `assert` or `coverage`; for a CI file,
+`CI`, `workflow`, `pipeline` or `GitHub Actions`; for a dependency change,
+the dependency's name or a word like `bump`, `upgrade` or `dependency`.
+Otherwise the hunk is `unasked` with reason `asked: generic overlap only`,
+while `asked` still shows the raw score. When there is no transcript or no
 usable prompt, high-risk hunks are `unasked` and everything else is
 `unclear`.
 

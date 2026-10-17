@@ -12,3 +12,15 @@ func TestHighRisk(t *testing.T) {
 		}
 	}
 }
+
+func TestIsCIPath(t *testing.T) {
+	for p, want := range map[string]bool{
+		".github/workflows/ci.yml": true, `sub\.circleci\config.yml`: true, ".gitlab-ci.yml": true,
+		"Jenkinsfile": true, "build/azure-pipelines.yml": true,
+		"a_test.go": false, "docs/workflows.md": false, "tests/ci.yml": false,
+	} {
+		if got := IsCIPath(p); got != want {
+			t.Errorf("IsCIPath(%q) = %v, want %v", p, got, want)
+		}
+	}
+}

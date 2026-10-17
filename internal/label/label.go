@@ -24,9 +24,6 @@ var (
 		regexp.MustCompile(`(^|/)tests?/`),
 		regexp.MustCompile(`(^|/)__tests__/`),
 		regexp.MustCompile(`(^|/)testdata/`),
-		regexp.MustCompile(`(^|/)\.github/workflows/`),
-		regexp.MustCompile(`(^|/)\.circleci/`),
-		regexp.MustCompile(`(^|/)(\.gitlab-ci\.yml|Jenkinsfile|azure-pipelines\.yml)$`),
 	}
 	depBases = map[string]bool{
 		"go.mod": true, "go.sum": true, "package.json": true, "package-lock.json": true,
@@ -91,6 +88,9 @@ func classify(h model.Hunk, ev *model.EditEvent) model.Label {
 }
 
 func isTestPath(p string) bool {
+	if model.IsCIPath(p) {
+		return true
+	}
 	p = strings.ReplaceAll(p, "\\", "/")
 	for _, re := range testPathRes {
 		if re.MatchString(p) {
@@ -515,25 +515,19 @@ func featureName(h model.Hunk) string {
 	return h.File
 }
 
-// Terms returns the specific names a prompt can mention to ask for a
-// high-risk hunk (R36), for invite.Input.Terms: for a deletion, its removed
-// symbols and literals (for a deleted file, its removed symbols and its file
-// name; for a pure code removal with neither, its enclosing symbol); for a
-// dependency change, the names of the dependencies on its changed lines.
-// Other labels have none.
-func Terms(h model.Hunk) []string {
-	switch classify(h, nil) {
+// Terms returns the specific names a prompt must mention to ask for a
+// high-risk hunk with label l (R36b, R36c), for invite.Input.Terms: for a
+// deletion, its removed symbols and literals (for a deleted file, its removed
+// symbols and its file name); for a dependency change, the full and short
+// names of the dependencies on its changed lines. A deletion with neither
+// (pure code removal) has none, so Test 1 can never invite it. Other labels
+// have none.
+func Terms(h model.Hunk, l model.Label) []string {
+	switch l {
 	case model.LabelDeletion:
 		d := deletionOf(h)
 		if d.file {
-			base := path.Base(strings.ReplaceAll(h.File, "\\", "/"))
-			if i := strings.LastIndex(base, "."); i > 0 {
-				base = base[:i]
-			}
-			return append(append([]string(nil), h.Symbols.Removed...), base)
-		}
-		if len(d.terms) == 0 && h.Symbols.Enclosing != "" {
-			return []string{h.Symbols.Enclosing}
+			return append(append([]string(nil), h.Symbols.Removed...), path.Base(strings.ReplaceAll(h.File, "\\", "/")))
 		}
 		return d.terms
 	case model.LabelDependency:
@@ -548,10 +542,11 @@ var (
 	depSkip    = map[string]bool{"require": true, "replace": true, "exclude": true, "module": true, "go": true, "toolchain": true}
 )
 
-// depNames extracts the dependency name each manifest or lock line starts
-// with ("go.uber.org/zap v1.27.0" → "zap", `"@types/node": "^20"` → "node",
-// "requests==2.31" → "requests"): the last path segment that is not a Go
-// major-version suffix, without an npm "@version". Duplicates are dropped.
+// depNames extracts the dependency each manifest or lock line starts with,
+// as its full name and its last path segment that is not a Go major-version
+// suffix, without an npm "@version": "go.uber.org/zap v1.27.0" → "go.uber.org/zap",
+// "zap"; `"@types/node": "^20"` → "@types/node", "node"; "requests==2.31" →
+// "requests". Duplicates are dropped.
 func depNames(lines []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -560,18 +555,19 @@ func depNames(lines []string) []string {
 		if m == nil || depSkip[m[1]] {
 			continue
 		}
-		name := m[1]
-		if i := strings.LastIndex(name, "@"); i > 0 {
-			name = name[:i]
+		full := m[1]
+		if i := strings.LastIndex(full, "@"); i > 0 {
+			full = full[:i]
 		}
-		segs := strings.Split(strings.Trim(name, "/"), "/")
+		segs := strings.Split(strings.Trim(full, "/"), "/")
 		for len(segs) > 1 && depMajorRe.MatchString(segs[len(segs)-1]) {
 			segs = segs[:len(segs)-1]
 		}
-		name = segs[len(segs)-1]
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
+		for _, name := range []string{full, segs[len(segs)-1]} {
+			if name != "" && !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
 		}
 	}
 	return out
