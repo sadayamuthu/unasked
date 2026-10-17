@@ -1,6 +1,7 @@
 package revert
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -427,10 +429,29 @@ func writeTemp(dir string, data []byte, perm os.FileMode) (string, error) {
 }
 
 // fixModes gives every file that existed before the drop and still exists
-// its recorded permission bits back (git apply rewrites with umask modes).
-func (s *snapshot) fixModes(work string) error {
+// its recorded permission bits back (git apply rewrites with umask modes),
+// except a file whose mode change is being dropped. A file renamed back
+// gets the mode its new name had.
+func (s *snapshot) fixModes(work string, hs []model.Hunk) error {
+	want := map[string]os.FileMode{}
 	for _, e := range s.m.Files {
-		if e.Absent {
+		if !e.Absent {
+			want[e.Path] = os.FileMode(e.Mode)
+		}
+	}
+	for _, h := range hs {
+		switch h.FileChange {
+		case model.FileMode:
+			delete(want, h.File)
+		case model.FileRename:
+			if m, ok := want[h.File]; ok && h.OldMode == "" {
+				want[h.OldFile] = m // a rename that also changed the mode restores it itself
+			}
+		}
+	}
+	for _, e := range s.m.Files {
+		m, ok := want[e.Path]
+		if !ok {
 			continue
 		}
 		st, err := os.Lstat(workPath(work, e.Path))
@@ -440,8 +461,8 @@ func (s *snapshot) fixModes(work string) error {
 		if err != nil {
 			return err
 		}
-		if st.Mode().Perm() != os.FileMode(e.Mode) {
-			if err := os.Chmod(workPath(work, e.Path), os.FileMode(e.Mode)); err != nil {
+		if st.Mode().Perm() != m {
+			if err := os.Chmod(workPath(work, e.Path), m); err != nil {
 				return err
 			}
 		}
@@ -484,7 +505,15 @@ func checkMode(full string, e fileEntry, h model.Hunk) error {
 // the dropped hunks.
 func (s *snapshot) verifyRegions(work string, hs []model.Hunk) error {
 	byFile := map[string][]model.Hunk{}
+	fileLevel := map[string]model.Hunk{}
 	for _, h := range hs {
+		if h.FileChange != "" {
+			fileLevel[h.File] = h
+			if h.OldFile != "" {
+				fileLevel[h.OldFile] = h
+			}
+			continue
+		}
 		byFile[h.File] = append(byFile[h.File], h)
 	}
 	for _, e := range s.m.Files {
@@ -497,6 +526,21 @@ func (s *snapshot) verifyRegions(work string, hs []model.Hunk) error {
 		if !e.Absent {
 			if pre, err = s.before(e); err != nil {
 				return err
+			}
+		}
+		fl, isFL := fileLevel[e.Path]
+		if isFL && fl.FileChange == model.FileRename {
+			if err := s.checkRename(work, e, fl, post, ok, byFile[fl.File]); err != nil {
+				return err
+			}
+			continue
+		}
+		if isFL {
+			if err := s.checkFileLevel(work, e, fl, pre, post, ok, len(fh) > 0); err != nil {
+				return err
+			}
+			if len(fh) == 0 {
+				continue
 			}
 		}
 		switch {
@@ -516,11 +560,100 @@ func (s *snapshot) verifyRegions(work string, hs []model.Hunk) error {
 		if err := regionCheck(pre, post, fh); err != nil {
 			return err
 		}
+		if isFL && fl.FileChange == model.FileMode {
+			continue // checkFileLevel checked the restored mode
+		}
 		if err := checkMode(workPath(work, e.Path), e, fh[0]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// checkRename verifies a dropped rename h at path e: the new name is gone,
+// and the old name holds the new name's bytes before the drop, with the
+// file's dropped content hunks (content) reverted, and its mode.
+func (s *snapshot) checkRename(work string, e fileEntry, h model.Hunk, post []byte, ok bool, content []model.Hunk) error {
+	if e.Path == h.File {
+		if e.Absent || ok {
+			return fmt.Errorf("%s should have been renamed back", e.Path)
+		}
+		return nil
+	}
+	if !e.Absent || !ok {
+		return fmt.Errorf("%s should have been renamed back", e.Path)
+	}
+	for _, n := range s.m.Files {
+		if n.Path != h.File {
+			continue
+		}
+		src, err := s.before(n)
+		if err != nil {
+			return err
+		}
+		if len(content) > 0 {
+			err = regionCheck(src, post, content)
+		} else if !bytes.Equal(src, post) {
+			err = fmt.Errorf("%s does not hold %s's bytes after the rename back", e.Path, h.File)
+		}
+		if err != nil {
+			return err
+		}
+		if runtime.GOOS != "windows" && h.OldMode == "" {
+			if st, err := os.Lstat(workPath(work, e.Path)); err != nil || st.Mode().Perm() != os.FileMode(n.Mode) {
+				return fmt.Errorf("%s mode after the rename back: %v", e.Path, err)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("%s is not in the snapshot", h.File)
+}
+
+// checkFileLevel verifies that dropping file-level hunk h left path e as
+// the reverse change requires: a mode change restored the old mode (content
+// untouched unless content hunks of the file were dropped too), an empty
+// file added is gone and an empty file deleted is back, empty.
+func (s *snapshot) checkFileLevel(work string, e fileEntry, h model.Hunk, pre, post []byte, ok, content bool) error {
+	full := workPath(work, e.Path)
+	switch {
+	case h.FileChange == model.FileAdd:
+		if e.Absent || ok {
+			return fmt.Errorf("%s should have been removed", e.Path)
+		}
+		return nil
+	case h.FileChange == model.FileDelete:
+		if !e.Absent || !ok || len(post) != 0 {
+			return fmt.Errorf("%s should have been re-created empty", e.Path)
+		}
+		return checkMode(full, e, h)
+	}
+	// FileMode
+	if e.Absent || !ok {
+		return fmt.Errorf("%s is missing after the drop", e.Path)
+	}
+	if !content && !bytes.Equal(pre, post) {
+		return fmt.Errorf("%s changed outside the dropped hunks", e.Path)
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	st, err := os.Lstat(full)
+	if err != nil {
+		return err
+	}
+	if want := modePerm(h.OldMode); st.Mode().Perm()&0o111 != want&0o111 {
+		return fmt.Errorf("%s mode is %o, want %s", e.Path, st.Mode().Perm(), h.OldMode)
+	}
+	return nil
+}
+
+// modePerm returns the permission bits of a git file mode ("100755").
+func modePerm(m string) os.FileMode {
+	v, err := strconv.ParseUint(m, 8, 32)
+	if err != nil {
+		return 0
+	}
+	return os.FileMode(v) & os.ModePerm
 }
 
 // recordAfter stores the tree's current state for every touched path as the

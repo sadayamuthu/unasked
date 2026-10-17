@@ -64,7 +64,9 @@
           "summary": {"type": "string"},
           "reason": {"type": "string"},
           "hash": {"type": "string"},
-          "high_risk": {"type": "boolean"}
+          "high_risk": {"type": "boolean"},
+          "file_change": {"type": "string", "enum": ["rename", "mode", "add", "delete"], "description": "set on a file-level hunk (no content lines); lines is then 0-0"},
+          "old_file": {"type": "string"}
         }
       }
     },

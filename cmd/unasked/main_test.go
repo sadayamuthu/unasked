@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -314,6 +315,20 @@ func TestReversePatchShapes(t *testing.T) {
 	}
 }
 
+// File-level sections (R41) reverse too: a rename swaps its names, a mode
+// change its modes.
+func TestReversePatchFileLevel(t *testing.T) {
+	in := "diff --git a/old name b/new name\nsimilarity index 100%\nrename from old name\nrename to new name\n" +
+		"diff --git a/m.sh b/m.sh\nold mode 100644\nnew mode 100755\n" +
+		"diff --git \"a/\\303\\251\" \"b/x\"\nrename from \"\\303\\251\"\nrename to x\n"
+	want := "diff --git a/new name b/old name\nsimilarity index 100%\nrename from new name\nrename to old name\n" +
+		"diff --git a/m.sh b/m.sh\nold mode 100755\nnew mode 100644\n" +
+		"diff --git a/x \"b/\\303\\251\"\nrename from x\nrename to \"\\303\\251\"\n"
+	if got := string(reversePatch([]byte(in))); got != want {
+		t.Errorf("reversePatch:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestKeepUserThenClean(t *testing.T) {
 	c := setup(t, false)
 	r := jsonReport(t, c.want(2, "--format", "json"))
@@ -532,5 +547,85 @@ func TestStartDirHookRunWithoutCwd(t *testing.T) {
 	ok := func() (string, error) { return "/w", nil }
 	if d, err := startDir([]string{"doctor"}, ok); err != nil || d != "/w" {
 		t.Errorf("doctor: %q, %v", d, err)
+	}
+}
+
+// withFiles commits extra files under the session's agent edit, which stays
+// uncommitted.
+func (c *cli) withFiles(files map[string]string) {
+	c.t.Helper()
+	fetch := c.g.Read("fetch.go")
+	c.g.Git("checkout", "--", "fetch.go")
+	for p, s := range files {
+		c.g.Write(p, s)
+	}
+	c.g.Commit("more")
+	c.g.Write("fetch.go", fetch)
+}
+
+// TestFileLevelChangesReported is the C3 probe: a renamed-away test and a
+// deleted empty file have no content lines, and used to report clean.
+func TestFileLevelChangesReported(t *testing.T) {
+	c := setup(t, true)
+	c.withFiles(map[string]string{"parser_test.go": "package main\n\nfunc TestParse(t *testing.T) {}\n", ".keep": ""})
+	c.g.Git("mv", "parser_test.go", "parser_test.go.disabled")
+	c.g.Git("rm", "-q", ".keep")
+	r := jsonReport(t, c.want(1, "--format", "json"))
+	got := map[string]report.HunkJSON{}
+	for _, h := range r.Hunks {
+		got[h.File] = h
+	}
+	if h := got["parser_test.go.disabled"]; h.FileChange != "rename" || h.OldFile != "parser_test.go" || h.Label != "test" || h.Verdict != "unclear" || !h.HighRisk {
+		t.Errorf("rename hunk %+v", h)
+	}
+	if h := got[".keep"]; h.FileChange != "delete" || h.Label != "deletion" || h.Verdict != "unclear" {
+		t.Errorf("delete hunk %+v", h)
+	}
+	text := c.want(1)
+	if !strings.Contains(text, "renamed parser_test.go to parser_test.go.disabled") {
+		t.Errorf("text report:\n%s", text)
+	}
+}
+
+// Dropping a rename's file-level hunk renames the file back; undo renames
+// it again. Both are byte-exact.
+func TestDropFileLevelRenameThenUndo(t *testing.T) {
+	c := setup(t, true)
+	body := "package main\n\nfunc TestParse(t *testing.T) {}\n"
+	c.withFiles(map[string]string{"parser_test.go": body, "run.sh": "#!/bin/sh\necho hi\n"})
+	if err := os.Rename(filepath.Join(c.g.Dir, "parser_test.go"), filepath.Join(c.g.Dir, "parser_test.go.disabled")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(c.g.Dir, "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := jsonReport(t, c.want(1, "--format", "json"))
+	id := hunkID(t, r, "parser_test.go.disabled")
+	c.want(0, "--drop", id)
+	if _, err := os.Stat(filepath.Join(c.g.Dir, "parser_test.go.disabled")); !os.IsNotExist(err) {
+		t.Errorf("renamed file still there: %v", err)
+	}
+	if got := c.g.Read("parser_test.go"); got != body {
+		t.Errorf("parser_test.go after drop %q", got)
+	}
+	c.want(0, "undo")
+	if _, err := os.Stat(filepath.Join(c.g.Dir, "parser_test.go")); !os.IsNotExist(err) {
+		t.Errorf("old name back after undo: %v", err)
+	}
+	if got := c.g.Read("parser_test.go.disabled"); got != body {
+		t.Errorf("parser_test.go.disabled after undo %q", got)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	// The mode change is its own hunk and drops alone.
+	r = jsonReport(t, c.want(1, "--format", "json"))
+	c.want(0, "--drop", hunkID(t, r, "run.sh"))
+	if st, err := os.Stat(filepath.Join(c.g.Dir, "run.sh")); err != nil || st.Mode().Perm() != 0o644 {
+		t.Errorf("run.sh mode after drop: %v %v", st.Mode(), err)
+	}
+	c.want(0, "undo")
+	if st, err := os.Stat(filepath.Join(c.g.Dir, "run.sh")); err != nil || st.Mode().Perm() != 0o755 {
+		t.Errorf("run.sh mode after undo: %v %v", st.Mode(), err)
 	}
 }

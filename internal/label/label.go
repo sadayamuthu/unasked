@@ -63,6 +63,9 @@ func Classify(h model.Hunk, ev *model.EditEvent) (model.Label, bool) {
 }
 
 func classify(h model.Hunk, ev *model.EditEvent) model.Label {
+	if h.FileChange != "" {
+		return classifyFileChange(h)
+	}
 	switch {
 	case isTestPath(h.File):
 		return model.LabelTest
@@ -85,6 +88,42 @@ func classify(h model.Hunk, ev *model.EditEvent) model.Label {
 		return model.LabelRefactor
 	}
 	return model.LabelUnknown
+}
+
+// classifyFileChange labels a file-level hunk (R41): a test path (either
+// name of a rename) is test and a dependency manifest dependency; otherwise
+// a rename or an empty file deleted is a deletion (a rename removes the old
+// path), a mode change a refactor and an empty file added a feature.
+func classifyFileChange(h model.Hunk) model.Label {
+	for _, p := range []string{h.File, h.OldFile} {
+		switch {
+		case p == "":
+		case isTestPath(p):
+			return model.LabelTest
+		case depBases[path.Base(p)] || isRequirements(path.Base(p)):
+			return model.LabelDependency
+		}
+	}
+	switch h.FileChange {
+	case model.FileRename, model.FileDelete:
+		return model.LabelDeletion
+	case model.FileMode:
+		return model.LabelRefactor
+	}
+	return model.LabelFeature
+}
+
+// fileChangeSummary describes a file-level hunk.
+func fileChangeSummary(h model.Hunk) string {
+	switch h.FileChange {
+	case model.FileRename:
+		return fmt.Sprintf("renamed %s to %s", h.OldFile, h.File)
+	case model.FileMode:
+		return fmt.Sprintf("changed mode of %s from %s to %s", h.File, h.OldMode, h.NewMode)
+	case model.FileAdd:
+		return "added empty file " + h.File
+	}
+	return "deleted empty file " + h.File
 }
 
 func isTestPath(p string) bool {
@@ -431,7 +470,7 @@ func Apply(r *gitx.Repo, s []model.Scored) []model.Scored {
 		h.Label, h.HighRisk = Classify(h.Hunk, h.Event)
 		h.RemovedSymbols = nil
 		h.XRefs = 0
-		if h.Label == model.LabelDeletion {
+		if h.Label == model.LabelDeletion && h.Hunk.FileChange == "" {
 			if d := deletionOf(h.Hunk); !d.file {
 				h.RemovedSymbols = d.terms
 				if r != nil {
@@ -462,6 +501,9 @@ func Apply(r *gitx.Repo, s []model.Scored) []model.Scored {
 // Summary renders the fixed one-line description for the scored hunk's label.
 func Summary(s model.Scored) string {
 	h := s.Hunk
+	if h.FileChange != "" {
+		return fileChangeSummary(h)
+	}
 	switch s.Label {
 	case model.LabelDeletion:
 		d := deletionOf(h)
@@ -523,6 +565,17 @@ func featureName(h model.Hunk) string {
 // (pure code removal) has none, so Test 1 can never invite it. Other labels
 // have none.
 func Terms(h model.Hunk, l model.Label) []string {
+	if h.FileChange != "" {
+		// A rename or deleted empty file is named by the path it removes.
+		if l == model.LabelDeletion {
+			p := h.File
+			if h.OldFile != "" {
+				p = h.OldFile
+			}
+			return []string{path.Base(p)}
+		}
+		return nil
+	}
 	switch l {
 	case model.LabelDeletion:
 		d := deletionOf(h)

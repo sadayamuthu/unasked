@@ -33,6 +33,9 @@ func Diff(r *gitx.Repo, fromTree, toTree string) ([]model.Hunk, int, error) {
 func fillSymbols(r *gitx.Repo, fromTree, toTree string, hs []model.Hunk) {
 	var oldPaths, newPaths []string
 	for _, h := range hs {
+		if h.FileChange != "" {
+			continue // no lines, no symbols
+		}
 		if !h.NewFile {
 			oldPaths = append(oldPaths, oldPath(h))
 		}
@@ -43,6 +46,9 @@ func fillSymbols(r *gitx.Repo, fromTree, toTree string, hs []model.Hunk) {
 	oldBlobs, newBlobs := blobs(r, fromTree, oldPaths), blobs(r, toTree, newPaths)
 	for i := range hs {
 		h := &hs[i]
+		if h.FileChange != "" {
+			continue
+		}
 		var oldSrc, newSrc []byte
 		if !h.NewFile {
 			oldSrc = oldBlobs[oldPath(*h)]

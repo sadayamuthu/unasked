@@ -660,13 +660,14 @@ func TestDropOddPath(t *testing.T) {
 		t.Fatalf("expected a rename hunk, got %+v", cur)
 	}
 	before := f.state()
-	if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+	if _, err := f.drop(cur, hashesOf(cur, func(s model.Scored) bool { return s.Hunk.FileChange == "" })); err != nil {
 		t.Fatal(err)
 	}
 	if f.g.Read(name) != fourLines {
 		t.Fatalf("odd path not reverted: %q", f.g.Read(name))
 	}
-	// Dropping a renamed file's hunk reverts its content, not the rename.
+	// Dropping a renamed file's content hunk reverts its content, not the
+	// rename, which is a file-level hunk of its own.
 	if f.g.Read("new näme.txt") != fourLines {
 		t.Fatalf("renamed file not reverted: %q", f.g.Read("new näme.txt"))
 	}
@@ -983,7 +984,16 @@ func TestDropKeepsFileModes(t *testing.T) {
 			}
 		}
 	}
-	if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+	// run.sh's mode change is a file-level hunk of its own (R41); dropping
+	// only the content hunks leaves every mode as it is.
+	modeHunk := false
+	for _, s := range cur {
+		modeHunk = modeHunk || s.Hunk.File == "run.sh" && s.Hunk.FileChange == model.FileMode
+	}
+	if !modeHunk {
+		t.Fatalf("no mode hunk for run.sh: %+v", cur)
+	}
+	if _, err := f.drop(cur, hashesOf(cur, func(s model.Scored) bool { return s.Hunk.FileChange == "" })); err != nil {
 		t.Fatal(err)
 	}
 	check("after drop")
@@ -1183,6 +1193,79 @@ func TestUndoPlaceFailureRollsBack(t *testing.T) {
 				t.Fatalf("failed undo left a partly restored tree (or temp files):\n%v\nwant\n%v", f.state(), dropped)
 			}
 			stepHook = nil
+			if err := Undo(f.r, "", false); err != nil {
+				t.Fatal(err)
+			}
+			if !sameState(before, f.state()) {
+				t.Fatal("undo not byte-exact")
+			}
+		})
+	}
+}
+
+// Dropping a rename together with its file's content hunks renames the file
+// back with its old content; dropping the rename alone while a content hunk
+// of the file stays is refused.
+func TestDropRenameWithContent(t *testing.T) {
+	f := newFixture(t)
+	f.g.Write("old name.txt", fourLines)
+	f.setBase()
+	f.g.Remove("old name.txt")
+	f.g.Write("new näme.txt", "one\ntwo\nthree\nfour\nFIVE\nsix\nseven\neight\n")
+	cur := f.scored(nil)
+	if _, err := Prepare(f.r, nil, cur, hashesOf(cur, func(s model.Scored) bool { return s.Hunk.FileChange != "" }), true); !errors.Is(err, ErrDependency) {
+		t.Fatalf("rename alone: err = %v, want ErrDependency", err)
+	}
+	before := f.state()
+	if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+		t.Fatal(err)
+	}
+	if f.g.Read("old name.txt") != fourLines {
+		t.Fatalf("old name.txt after drop %q", f.g.Read("old name.txt"))
+	}
+	if _, err := os.Stat(filepath.Join(f.g.Dir, "new näme.txt")); !os.IsNotExist(err) {
+		t.Fatal("new name still there")
+	}
+	if err := Undo(f.r, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if !sameState(before, f.state()) {
+		t.Fatal("undo not byte-exact")
+	}
+}
+
+// Empty files added or deleted are file-level hunks: dropping them deletes
+// or re-creates the empty file, and undo reverses it byte-exact. (Both in
+// one diff would pair up as a rename.)
+func TestDropEmptyFileAddAndDelete(t *testing.T) {
+	for _, kind := range []string{model.FileDelete, model.FileAdd} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t)
+			f.g.Write(".keep", "")
+			f.g.Write("a.txt", fourLines)
+			f.setBase()
+			file := ".keep"
+			if kind == model.FileDelete {
+				f.g.Remove(".keep")
+			} else {
+				file = "new/empty.txt"
+				f.g.Write(file, "")
+			}
+			cur := f.scored(nil)
+			if len(cur) != 1 || cur[0].Hunk.File != file || cur[0].Hunk.FileChange != kind {
+				t.Fatalf("hunks %+v", cur)
+			}
+			before := f.state()
+			if _, err := f.drop(cur, hashesOf(cur, func(model.Scored) bool { return true })); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(filepath.Join(f.g.Dir, filepath.FromSlash(file)))
+			if kind == model.FileDelete && (err != nil || len(b) != 0) {
+				t.Fatalf("%s after drop: %q %v", file, b, err)
+			}
+			if kind == model.FileAdd && !os.IsNotExist(err) {
+				t.Fatalf("%s still there: %v", file, err)
+			}
 			if err := Undo(f.r, "", false); err != nil {
 				t.Fatal(err)
 			}

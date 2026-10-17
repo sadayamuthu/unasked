@@ -21,11 +21,15 @@ func HashOf(path string, removed, added []string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// AssignIDs orders hunks by file then new start and numbers them h01..h99, h100...
+// AssignIDs orders hunks by file, a file-level hunk first, then new start,
+// and numbers them h01..h99, h100...
 func AssignIDs(h []model.Hunk) {
 	sort.SliceStable(h, func(i, j int) bool {
 		if h[i].File != h[j].File {
 			return h[i].File < h[j].File
+		}
+		if (h[i].FileChange != "") != (h[j].FileChange != "") {
+			return h[i].FileChange != ""
 		}
 		return h[i].NewStart < h[j].NewStart
 	})
@@ -43,6 +47,9 @@ type fileState struct {
 	binary                    bool
 	plusRaw                   string // raw (possibly quoted) "b/<new>" from the +++ line
 	inHunks                   bool
+	oldMode, newMode          string // "old mode" / "new mode", or the new/deleted file mode
+	fileHdr                   []byte // the header lines a file-level patch keeps
+	hunks                     int    // content hunks emitted for this file
 }
 
 // Parse reads a `git diff -U0` stream. It returns the hunks and the number of
@@ -66,6 +73,7 @@ func Parse(diff []byte) ([]model.Hunk, int, error) {
 			cur.Patch = append(append([]byte{}, hdr...), curBuf...)
 			cur.Hash = HashOf(cur.File, cur.Removed, cur.Added)
 			hunks = append(hunks, *cur)
+			fs.hunks++
 			cur, curBuf = nil, nil
 		}
 	}
@@ -73,6 +81,11 @@ func Parse(diff []byte) ([]model.Hunk, int, error) {
 		flush()
 		if fs != nil && fs.binary {
 			binary++
+		}
+		if fs != nil && !fs.binary {
+			if h, ok := fileLevel(fs); ok {
+				hunks = append(hunks, h)
+			}
 		}
 		fs = nil
 	}
@@ -115,15 +128,28 @@ func Parse(diff []byte) ([]model.Hunk, int, error) {
 				fs.inHunks = true
 				fs.header = append(fs.header, raw...)
 			default:
+				keep := true
 				switch {
 				case strings.HasPrefix(line, "new file mode "):
 					fs.isNew = true
+					fs.newMode = line[len("new file mode "):]
 				case strings.HasPrefix(line, "deleted file mode "):
 					fs.isDeleted = true
+					fs.oldMode = line[len("deleted file mode "):]
+				case strings.HasPrefix(line, "old mode "):
+					fs.oldMode = line[len("old mode "):]
+				case strings.HasPrefix(line, "new mode "):
+					fs.newMode = line[len("new mode "):]
 				case strings.HasPrefix(line, "rename from "):
 					fs.renameFrom = unquote(line[len("rename from "):])
 				case strings.HasPrefix(line, "rename to "):
 					fs.renameTo = unquote(line[len("rename to "):])
+				case strings.HasPrefix(line, "similarity index "):
+				default:
+					keep = false // index, copy and dissimilarity lines
+				}
+				if keep {
+					fs.fileHdr = append(fs.fileHdr, raw...)
 				}
 				fs.header = append(fs.header, raw...)
 			}
@@ -273,4 +299,86 @@ func modifyHeader(newRaw string) []byte {
 		tab = "\t"
 	}
 	return []byte("diff --git " + oldRaw + " " + newRaw + "\n--- " + oldRaw + tab + "\n+++ " + newRaw + tab + "\n")
+}
+
+// FileChangeHash is the identity of a file-level hunk: the first 12 hex
+// chars of sha256("file" NUL kind NUL path NUL old path NUL old mode NUL new
+// mode). Its input has five NULs, a content hunk's HashOf input two.
+func FileChangeHash(h model.Hunk) string {
+	s := strings.Join([]string{"file", h.FileChange, h.File, h.OldFile, h.OldMode, h.NewMode}, "\x00")
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// fileLevel returns the file-level hunk for a file section (R41): a rename,
+// a mode change, or an empty file added or deleted. Its Patch keeps only the
+// diff --git line and the rename and mode lines, so `git apply -R` renames
+// back (restoring a mode changed with it), restores the mode, or deletes or
+// re-creates the empty file. A rename that also changes content gets one
+// too: its content hunks apply to the new name only, and the rename's
+// identity must not depend on them (dropping them leaves the rename).
+func fileLevel(fs *fileState) (model.Hunk, bool) {
+	var h model.Hunk
+	diffLine := fs.header[:bytes.IndexByte(fs.header, '\n')+1]
+	switch {
+	case fs.renameFrom != "":
+		h.FileChange, h.File, h.OldFile = model.FileRename, fs.renameTo, fs.renameFrom
+		h.Patch = append(append([]byte{}, diffLine...), fs.fileHdr...)
+	case fs.oldMode != "" && fs.newMode != "" && !fs.isNew && !fs.isDeleted:
+		h.FileChange = model.FileMode
+		h.File = fs.renameTo
+		if h.File == "" {
+			h.File = fs.newPath
+		}
+		if h.File == "" {
+			h.File = diffGitPath(string(diffLine))
+		}
+		if fs.renameFrom != "" {
+			// The content hunks keep the rename; this one only the mode.
+			diffLine = modifyHeader(fs.plusRaw)
+			diffLine = diffLine[:bytes.IndexByte(diffLine, '\n')+1]
+		}
+		h.Patch = fmt.Appendf(append([]byte{}, diffLine...), "old mode %s\nnew mode %s\n", fs.oldMode, fs.newMode)
+	case fs.isNew && fs.hunks == 0:
+		h.FileChange, h.NewFile, h.File = model.FileAdd, true, diffGitPath(string(diffLine))
+		h.Patch = append(append([]byte{}, diffLine...), fs.fileHdr...)
+	case fs.isDeleted && fs.hunks == 0:
+		h.FileChange, h.DeletedFile, h.File = model.FileDelete, true, diffGitPath(string(diffLine))
+		h.Patch = append(append([]byte{}, diffLine...), fs.fileHdr...)
+	default:
+		return h, false
+	}
+	if h.File == "" {
+		return h, false
+	}
+	h.OldMode, h.NewMode = fs.oldMode, fs.newMode
+	h.Hash = FileChangeHash(h)
+	return h, true
+}
+
+// diffGitPath returns the path of a "diff --git a/<p> b/<p>" line whose two
+// sides name the same file (git quotes a side that needs it).
+func diffGitPath(line string) string {
+	rest := strings.TrimSuffix(strings.TrimPrefix(line, "diff --git "), "\n")
+	if strings.HasPrefix(rest, `"`) {
+		for i := 1; i < len(rest); i++ {
+			switch rest[i] {
+			case '\\':
+				i++
+			case '"':
+				return strings.TrimPrefix(unquote(rest[:i+1]), "a/")
+			}
+		}
+		return ""
+	}
+	if n := (len(rest) - 1) / 2; n > 2 && len(rest)%2 == 1 && rest[n] == ' ' {
+		a, b := rest[:n], rest[n+1:]
+		if strings.HasPrefix(a, "a/") && strings.HasPrefix(b, "b/") && a[2:] == b[2:] {
+			return a[2:]
+		}
+	}
+	if i := strings.LastIndex(rest, " b/"); i >= 0 {
+		return unquote(rest[i+3:])
+	}
+	return ""
 }

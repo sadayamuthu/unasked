@@ -51,7 +51,21 @@ type Hunk struct {
 	NewFile, DeletedFile                   bool
 	Patch                                  []byte // standalone single-hunk patch with file header
 	Symbols                                SymbolDelta
+	// FileChange marks a file-level hunk (R41): a change with no content
+	// lines — FileRename (OldFile → File), FileMode (OldMode → NewMode), or
+	// an empty file added (FileAdd) or deleted (FileDelete). Its Patch is
+	// header-only and its Hash covers the change, not lines.
+	FileChange       string
+	OldMode, NewMode string
 }
+
+// File-level hunk kinds (Hunk.FileChange).
+const (
+	FileRename = "rename"
+	FileMode   = "mode"
+	FileAdd    = "add"
+	FileDelete = "delete"
+)
 
 type Prompt struct {
 	Turn int    `json:"turn"`

@@ -107,11 +107,111 @@ rename from p.go
 rename to q.go
 `
 	hs, bin, err := Parse([]byte(d))
-	if err != nil || bin != 0 || len(hs) != 1 {
+	if err != nil || bin != 0 || len(hs) != 3 {
 		t.Fatalf("err=%v bin=%d n=%d", err, bin, len(hs))
 	}
-	if hs[0].OldFile != "old.go" || hs[0].File != "new.go" {
+	if hs[0].OldFile != "old.go" || hs[0].File != "new.go" || hs[0].FileChange != "" {
 		t.Errorf("%+v", hs[0])
+	}
+	// Each rename is also a file-level hunk (R41), with or without content.
+	for i, w := range [][2]string{{"old.go", "new.go"}, {"p.go", "q.go"}} {
+		h := hs[i+1]
+		if h.FileChange != model.FileRename || h.OldFile != w[0] || h.File != w[1] {
+			t.Errorf("%+v", h)
+		}
+	}
+}
+
+// TestParseFileLevelChanges (R41): changes without content lines — a pure
+// rename, a mode change, an empty file added or deleted — each become one
+// file-level hunk with no lines, a header-only patch and a hash over the
+// change, so they are never invisible.
+func TestParseFileLevelChanges(t *testing.T) {
+	d := `diff --git a/.keep b/.keep
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/m.sh b/m.sh
+old mode 100644
+new mode 100755
+index de98044..7be73ce
+--- a/m.sh
++++ b/m.sh
+@@ -2 +2 @@ a
+-b
++B
+diff --git a/new.txt b/new.txt
+new file mode 100644
+index 0000000..e69de29
+diff --git a/parser_test.go b/parser_test.go.disabled
+similarity index 100%
+rename from parser_test.go
+rename to parser_test.go.disabled
+diff --git a/x.sh b/x.sh
+old mode 100755
+new mode 100644
+`
+	hs, bin, err := Parse([]byte(d))
+	if err != nil || bin != 0 {
+		t.Fatalf("err=%v bin=%d", err, bin)
+	}
+	type want struct {
+		file, old, kind, oldMode, newMode, patch string
+	}
+	wants := []want{
+		{".keep", "", model.FileDelete, "100644", "", "diff --git a/.keep b/.keep\ndeleted file mode 100644\n"},
+		{"m.sh", "", model.FileMode, "100644", "100755", "diff --git a/m.sh b/m.sh\nold mode 100644\nnew mode 100755\n"},
+		{"m.sh", "", "", "", "", ""},
+		{"new.txt", "", model.FileAdd, "", "100644", "diff --git a/new.txt b/new.txt\nnew file mode 100644\n"},
+		{"parser_test.go.disabled", "parser_test.go", model.FileRename, "", "", "diff --git a/parser_test.go b/parser_test.go.disabled\nsimilarity index 100%\nrename from parser_test.go\nrename to parser_test.go.disabled\n"},
+		{"x.sh", "", model.FileMode, "100755", "100644", "diff --git a/x.sh b/x.sh\nold mode 100755\nnew mode 100644\n"},
+	}
+	if len(hs) != len(wants) {
+		t.Fatalf("got %d hunks: %+v", len(hs), hs)
+	}
+	AssignIDs(hs)
+	seen := map[string]bool{}
+	for i, w := range wants {
+		h := hs[i]
+		if h.File != w.file || h.OldFile != w.old || h.FileChange != w.kind {
+			t.Errorf("hunk %d: file %q old %q kind %q, want %+v", i, h.File, h.OldFile, h.FileChange, w)
+		}
+		if seen[h.Hash] || h.Hash == "" {
+			t.Errorf("hunk %d: hash %q not unique", i, h.Hash)
+		}
+		seen[h.Hash] = true
+		if w.kind == "" {
+			continue
+		}
+		if h.OldMode != w.oldMode || h.NewMode != w.newMode || string(h.Patch) != w.patch {
+			t.Errorf("hunk %d: modes %q→%q patch:\n%s", i, h.OldMode, h.NewMode, h.Patch)
+		}
+		if len(h.Added)+len(h.Removed) != 0 || h.Hash != FileChangeHash(h) {
+			t.Errorf("hunk %d: %+v", i, h)
+		}
+	}
+}
+
+// TestFileLevelHunksFromGit is the reviewer's probe: a test file renamed
+// away and an empty file deleted used to diff to zero hunks ("clean").
+func TestFileLevelHunksFromGit(t *testing.T) {
+	g := gittest.New(t)
+	g.Write("parser_test.go", "package p\n\nfunc TestParse(t *testing.T) {}\n")
+	g.Write(".keep", "")
+	g.Commit("init")
+	r, from := snap(t, g)
+	g.Git("mv", "parser_test.go", "parser_test.go.disabled")
+	g.Git("rm", "-q", ".keep")
+	_, to := snap(t, g)
+	hs, _, err := Diff(r, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, h := range hs {
+		kinds[h.File] = h.FileChange
+	}
+	if len(hs) != 2 || kinds[".keep"] != model.FileDelete || kinds["parser_test.go.disabled"] != model.FileRename {
+		t.Fatalf("hunks %+v", hs)
 	}
 }
 
@@ -291,11 +391,17 @@ func TestRenamedFileHunksApplyIndependently(t *testing.T) {
 	g.Remove("old name.txt")
 	g.Write("sub/new name.txt", strings.Join(edit, "\n")+"\n")
 	_, to := snap(t, g)
-	hs, _, err := Diff(r, from, to)
+	all, _, err := Diff(r, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hs) != 2 || hs[0].OldFile != "old name.txt" || hs[0].File != "sub/new name.txt" {
+	// The rename itself is a file-level hunk (R41), first in its file; the
+	// content hunks apply to the new name without it.
+	if len(all) != 3 || all[0].FileChange != model.FileRename || all[0].OldFile != "old name.txt" {
+		t.Fatalf("hunks: %+v", all)
+	}
+	hs := all[1:]
+	if hs[0].OldFile != "old name.txt" || hs[0].File != "sub/new name.txt" {
 		t.Fatalf("hunks: %+v", hs)
 	}
 	for _, h := range hs {

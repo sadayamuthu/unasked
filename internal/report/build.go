@@ -54,6 +54,8 @@ type HunkJSON struct {
 	Reason              string   `json:"reason,omitempty"`
 	Hash                string   `json:"hash"`
 	HighRisk            bool     `json:"high_risk"`
+	FileChange          string   `json:"file_change,omitempty"` // rename|mode|add|delete for a file-level hunk
+	OldFile             string   `json:"old_file,omitempty"`
 }
 
 // KeptJSON is a hunk silenced by --keep. ID is empty when the hunk is not in this diff.
@@ -204,6 +206,7 @@ func hunkJSON(s model.Scored) HunkJSON {
 		Asked: s.Asked, Said: s.Said, Turn: s.Turn,
 		RemovedSymbols: s.RemovedSymbols, ReferencesElsewhere: s.XRefs,
 		Summary: s.Summary, Reason: s.Reason, Hash: h.Hash, HighRisk: s.HighRisk,
+		FileChange: h.FileChange, OldFile: h.OldFile,
 	}
 	if s.Tell != "" {
 		t := s.Tell
@@ -321,7 +324,12 @@ func (r *Report) firstPrompt(width int) []string {
 	return append(lines, cur)
 }
 
-func (h HunkJSON) location() string { return h.File + ":" + h.Lines }
+func (h HunkJSON) location() string {
+	if h.FileChange != "" {
+		return h.File // a file-level hunk has no lines
+	}
+	return h.File + ":" + h.Lines
+}
 
 func (h HunkJSON) blurb() string {
 	s := oneLine(h.Summary)

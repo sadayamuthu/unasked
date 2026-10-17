@@ -109,12 +109,17 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 		if a.File != b.File {
 			return a.File < b.File
 		}
+		if (a.FileChange != "") != (b.FileChange != "") {
+			return a.FileChange != "" // file-level first: buildPatch relies on it
+		}
 		return a.NewStart < b.NewStart
 	})
 
 	for _, h := range p.Hunks {
-		if err := checkPath(h.File); err != nil {
-			return nil, err
+		for _, f := range filesOf(h) {
+			if err := checkPath(f); err != nil {
+				return nil, err
+			}
 		}
 		if m := unsupportedMode(h.Patch); m != "" {
 			return nil, fmt.Errorf("%w: %s has file mode %s (symlink or submodule)", ErrApplyCheck, h.File, m)
@@ -124,6 +129,9 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 		return nil, err
 	}
 	if err := checkDependencies(current, want, kept); err != nil {
+		return nil, err
+	}
+	if err := checkRenames(current, want); err != nil {
 		return nil, err
 	}
 	patch, err := buildPatch(r.Dir, p.Hunks)
@@ -173,8 +181,10 @@ func checkStaged(r *gitx.Repo, hs []model.Hunk) error {
 		staged[p] = true
 	}
 	for _, h := range hs {
-		if staged[h.File] {
-			return fmt.Errorf("%w (%s)", ErrStagedOverlap, h.File)
+		for _, p := range filesOf(h) {
+			if staged[p] {
+				return fmt.Errorf("%w (%s)", ErrStagedOverlap, p)
+			}
 		}
 	}
 	return nil
@@ -205,6 +215,23 @@ func checkDependencies(current []model.Scored, drop, kept map[string]bool) error
 				if references(o.Hunk, sym) {
 					return fmt.Errorf("%w: %s uses %s from %s", ErrDependency, o.Hunk.ID, sym, h.ID)
 				}
+			}
+		}
+	}
+	return nil
+}
+
+// checkRenames refuses to drop a rename while a content hunk of the renamed
+// file stays: renaming back would move that hunk to the old name.
+func checkRenames(current []model.Scored, drop map[string]bool) error {
+	for _, d := range current {
+		h := d.Hunk
+		if !drop[h.Hash] || h.FileChange != model.FileRename {
+			continue
+		}
+		for _, o := range current {
+			if o.Hunk.File == h.File && o.Hunk.FileChange == "" && !drop[o.Hunk.Hash] {
+				return fmt.Errorf("%w: %s renames %s; drop %s with it", ErrDependency, h.ID, h.File, o.Hunk.ID)
 			}
 		}
 	}
@@ -275,7 +302,11 @@ func keepHeaderLine(line []byte) bool {
 	return false
 }
 
-// buildPatch writes one file section per path with its chosen hunks in order.
+// buildPatch writes one file section per path with its chosen hunks in
+// order. A file-level hunk (sorted first in its file) writes its own
+// header-only section; a rename whose file's content hunks are dropped with
+// it becomes the header of their section instead, since git cannot revert
+// a rename and content of the renamed file given as separate sections.
 // Each @@ line is renumbered: the new side stays the working-tree position;
 // the old side is that position shifted by the chosen hunks above it, so a
 // subset applies at the right lines even when unchosen hunks sit above it.
@@ -288,7 +319,16 @@ func buildPatch(work string, hs []model.Hunk) ([]byte, error) {
 	var out bytes.Buffer
 	file, offset := "", 0
 	var lines [][]byte
-	for _, h := range hs {
+	for i, h := range hs {
+		if h.FileChange != "" {
+			out.Write(h.Patch)
+			file = ""
+			if h.FileChange == model.FileRename && i+1 < len(hs) && hs[i+1].File == h.File && hs[i+1].FileChange == "" {
+				out.WriteString(renameFileLines(h.Patch))
+				file, offset, lines = h.File, 0, nil
+			}
+			continue
+		}
 		hdr, at, body := splitPatch(h.Patch)
 		if len(at) == 0 {
 			return nil, fmt.Errorf("%w: hunk %s has no @@ line", ErrApplyCheck, h.ID)
@@ -331,6 +371,29 @@ func buildPatch(work string, hs []model.Hunk) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// renameFileLines returns the ---/+++ lines for a rename's header-only
+// patch, from its "rename from"/"rename to" names as git printed them.
+func renameFileLines(patch []byte) string {
+	var from, to string
+	for _, l := range strings.Split(string(patch), "\n") {
+		if v, ok := strings.CutPrefix(l, "rename from "); ok {
+			from = v
+		} else if v, ok := strings.CutPrefix(l, "rename to "); ok {
+			to = v
+		}
+	}
+	side := func(p string, s string) string {
+		if strings.HasPrefix(p, `"`) {
+			return `"` + s + p[1:]
+		}
+		if strings.Contains(p, " ") {
+			return s + p + "\t" // git's marker for a name with spaces
+		}
+		return s + p
+	}
+	return "--- " + side(from, "a/") + "\n+++ " + side(to, "b/") + "\n"
+}
+
 // Drop applies the plan (§9.1.5, §9.2) and returns the snapshot id. Any
 // failure after the snapshot restores it; if that restore also fails the
 // error names the snapshot so the user can run `unasked undo <id>`.
@@ -371,7 +434,7 @@ func Drop(r *gitx.Repo, p *Plan, rescore func() ([]model.Scored, error)) (string
 	}
 	// git apply rewrites files with umask permissions; put back each
 	// surviving file's own mode before verifying.
-	if err := snap.fixModes(r.Dir); err != nil {
+	if err := snap.fixModes(r.Dir, p.Hunks); err != nil {
 		return fail(fmt.Errorf("%w: %v", ErrVerify, err))
 	}
 	if err := snap.verifyRegions(r.Dir, p.Hunks); err != nil {
@@ -428,11 +491,23 @@ func checkPatch(r *gitx.Repo, patch []byte, paths []string) error {
 	return nil
 }
 
+// filesOf lists the paths dropping h writes: its file, and for a
+// file-level rename the old name it moves back to. A renamed file's content
+// hunk is applied to the new name only (see hunk.modifyHeader).
+func filesOf(h model.Hunk) []string {
+	if h.FileChange == model.FileRename && h.OldFile != "" {
+		return []string{h.File, h.OldFile}
+	}
+	return []string{h.File}
+}
+
 func touchedPaths(hs []model.Hunk) []string {
 	var out []string
 	for _, h := range hs {
-		if !slices.Contains(out, h.File) {
-			out = append(out, h.File)
+		for _, p := range filesOf(h) {
+			if !slices.Contains(out, p) {
+				out = append(out, p)
+			}
 		}
 	}
 	sort.Strings(out)

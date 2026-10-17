@@ -24,8 +24,12 @@ const lcsMin = 0.8
 //  4. else nil.
 //
 // A pure deletion (no Added lines) aligns to the latest same-file event: the
-// edit that removed text leaves nothing to match on.
+// edit that removed text leaves nothing to match on. A file-level hunk
+// (rename, mode, empty file) never aligns.
 func Align(h model.Hunk, edits []model.EditEvent) *model.EditEvent {
+	if h.FileChange != "" {
+		return nil // a file-level hunk has no content to align (R41)
+	}
 	order := make([]int, 0, len(edits))
 	for i, e := range edits {
 		if e.File == h.File {

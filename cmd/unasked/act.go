@@ -218,9 +218,22 @@ func runUndo(args []string, dir string, stdout io.Writer) (int, error) {
 func reversePatch(p []byte) []byte {
 	var out bytes.Buffer
 	lines := bytes.SplitAfter(p, []byte("\n"))
+	var hdr map[string]string // the section's rename and mode values, swapped
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
+		if v, ok := swappedHeader(l, hdr); ok {
+			out.WriteString(v)
+			continue
+		}
 		switch {
+		case bytes.HasPrefix(l, []byte("diff --git ")):
+			hdr = sectionHeader(lines[i+1:])
+			from, to := hdr["rename from "], hdr["rename to "] // already swapped
+			if from != "" && to != "" {
+				out.WriteString("diff --git " + withSide(from, 'a') + " " + withSide(to, 'b') + "\n")
+			} else {
+				out.Write(l)
+			}
 		case len(l) == 0:
 		case bytes.HasPrefix(l, []byte("@@ ")):
 			oldN, newN, ok := hunkCounts(l)
@@ -270,6 +283,55 @@ func reversePatch(p []byte) []byte {
 		}
 	}
 	return out.Bytes()
+}
+
+// headerKeys are the extended header lines whose values a reversal swaps
+// in pairs: rename from/to and old/new mode.
+var headerKeys = [][2]string{{"rename from ", "rename to "}, {"old mode ", "new mode "}}
+
+// sectionHeader reads the extended header lines of one file section (up to
+// its ---, @@ or next diff --git line) and returns, for each paired key
+// present on both sides, the value the reversed line carries.
+func sectionHeader(lines [][]byte) map[string]string {
+	vals := map[string]string{}
+	for _, l := range lines {
+		if bytes.HasPrefix(l, []byte("diff --git ")) || bytes.HasPrefix(l, []byte("--- ")) || bytes.HasPrefix(l, []byte("@@ ")) {
+			break
+		}
+		for _, k := range headerKeys {
+			for _, key := range k {
+				if v, ok := bytes.CutPrefix(l, []byte(key)); ok {
+					vals[key] = strings.TrimRight(string(v), "\r\n")
+				}
+			}
+		}
+	}
+	out := map[string]string{}
+	for _, k := range headerKeys {
+		if a, b := vals[k[0]], vals[k[1]]; a != "" && b != "" {
+			out[k[0]], out[k[1]] = b, a
+		}
+	}
+	return out
+}
+
+// swappedHeader rewrites a rename or mode line with its swapped value.
+func swappedHeader(l []byte, hdr map[string]string) (string, bool) {
+	for key, v := range hdr {
+		if bytes.HasPrefix(l, []byte(key)) {
+			return key + v + "\n", true
+		}
+	}
+	return "", false
+}
+
+// withSide prefixes a header path as git prints it (maybe C-quoted) with
+// the side's "a/" or "b/".
+func withSide(p string, side byte) string {
+	if strings.HasPrefix(p, `"`) {
+		return `"` + string(side) + "/" + p[1:]
+	}
+	return string(side) + "/" + p
 }
 
 var atRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$`)
