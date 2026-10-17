@@ -33,6 +33,10 @@ type Spec struct {
 	// ConfigPath is the hooks config file: user scope under home, or the
 	// repo-local file when project is set.
 	ConfigPath func(home, repo string, project bool) string
+	// OtherPaths, when set, lists more config files of a scope that may hold
+	// unasked's entries (where earlier versions installed); uninstall and
+	// status check them too.
+	OtherPaths func(home, repo string, project bool) []string
 	// Install adds unasked's entries for bin, reporting whether cfg changed.
 	Install func(cfg map[string]any, bin string) (map[string]any, bool)
 	// Uninstall removes every unasked entry, reporting whether cfg changed.
@@ -161,18 +165,37 @@ func Install(s Spec, home, repo string, project bool, bin string) (path string, 
 // other entry and key in place. A missing file is not an error.
 func Uninstall(s Spec, home, repo string, project bool) (string, bool, error) {
 	path := s.ConfigPath(home, repo, project)
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return path, false, nil
+	changed := false
+	for _, p := range scopePaths(s, home, repo, project) {
+		if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		_, c, err := edit(p, s.Uninstall)
+		if err != nil {
+			return p, changed, err
+		}
+		if c && !changed {
+			path, changed = p, true
+		}
 	}
-	return edit(path, s.Uninstall)
+	return path, changed, nil
+}
+
+// scopePaths is the scope's config file followed by its OtherPaths.
+func scopePaths(s Spec, home, repo string, project bool) []string {
+	paths := []string{s.ConfigPath(home, repo, project)}
+	if s.OtherPaths != nil {
+		paths = append(paths, s.OtherPaths(home, repo, project)...)
+	}
+	return paths
 }
 
 // Status reports whether s's hook is installed, checking the user config and
 // then (when repo is set) the project config, and where it was found.
 func Status(s Spec, home, repo string) (installed bool, path string) {
-	paths := []string{s.ConfigPath(home, repo, false)}
+	paths := scopePaths(s, home, repo, false)
 	if repo != "" {
-		paths = append(paths, s.ConfigPath(home, repo, true))
+		paths = append(paths, scopePaths(s, home, repo, true)...)
 	}
 	for _, p := range paths {
 		doc, err := load(p)

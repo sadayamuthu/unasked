@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sadayamuthu/unasked/internal/adapter"
@@ -197,8 +199,8 @@ func hookStatus(name, repo string) string {
 	switch {
 	case !installed:
 		return "no"
-	case repo != "" && path == s.ConfigPath(hookHome(), repo, true):
-		return "project"
+	case repo != "" && strings.HasPrefix(path, repo+string(filepath.Separator)):
+		return "project" // the project file, or one an earlier version used
 	}
 	return "user"
 }

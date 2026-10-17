@@ -343,7 +343,7 @@ binary, at session start, on each prompt, and when the agent stops.
 
 | Agent | User scope (default) | `--project` |
 |-------|----------------------|-------------|
-| Claude Code | `~/.claude/settings.json` | `.claude/settings.json` |
+| Claude Code | `~/.claude/settings.json` | `.claude/settings.local.json` (per machine: the command holds this machine's binary path; `uninstall` and `status` also check `.claude/settings.json`) |
 | Codex | `~/.codex/hooks.json` (`$CODEX_HOME/hooks.json` if set) | `.codex/hooks.json` |
 
 Installing merges into the existing file: other settings, their order and

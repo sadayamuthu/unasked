@@ -213,12 +213,33 @@ func TestInstallFollowsSymlink(t *testing.T) {
 func TestProjectScope(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	home, repo := t.TempDir(), t.TempDir()
+	// m8: the hook command holds this machine's absolute binary path, so a
+	// project install goes to the uncommitted settings.local.json, never the
+	// shared settings.json.
 	path, _, err := Install(ClaudeCode, home, repo, true, testBin)
-	if err != nil || path != filepath.Join(repo, ".claude", "settings.json") {
+	if err != nil || path != filepath.Join(repo, ".claude", "settings.local.json") {
 		t.Fatalf("path %q err %v", path, err)
 	}
 	if ok, p := Status(ClaudeCode, home, repo); !ok || p != path {
 		t.Errorf("Status = %v, %q", ok, p)
+	}
+	// An entry an earlier version put in the shared settings.json is still
+	// found by status and removed by uninstall, with the local one.
+	shared := filepath.Join(repo, ".claude", "settings.json")
+	if _, _, err := edit(shared, func(cfg map[string]any) (map[string]any, bool) { return ClaudeCode.Install(cfg, testBin) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Uninstall(ClaudeCode, home, repo, true); err != nil {
+		t.Fatal(err)
+	}
+	if ok, p := Status(ClaudeCode, home, repo); ok {
+		t.Errorf("still installed at %q after uninstall", p)
+	}
+	if _, _, err := edit(shared, func(cfg map[string]any) (map[string]any, bool) { return ClaudeCode.Install(cfg, testBin) }); err != nil {
+		t.Fatal(err)
+	}
+	if ok, p := Status(ClaudeCode, home, repo); !ok || p != shared {
+		t.Errorf("legacy shared install: Status = %v, %q", ok, p)
 	}
 	if p := Codex.ConfigPath(home, repo, true); p != filepath.Join(repo, ".codex", "hooks.json") {
 		t.Errorf("codex project path %q", p)

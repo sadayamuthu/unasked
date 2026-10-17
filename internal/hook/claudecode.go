@@ -22,15 +22,24 @@ import (
 var claudeEvents = []string{"SessionStart", "UserPromptSubmit", "Stop"}
 
 // ClaudeCode is the Claude Code hook spec. User scope is
-// ~/.claude/settings.json; project scope is <repo>/.claude/settings.json,
-// which is shared through the repository.
+// ~/.claude/settings.json; project scope is <repo>/.claude/settings.local.json,
+// Claude Code's per-machine project file: the hook command holds this
+// machine's absolute binary path, so it must not go into the settings.json
+// shared through the repository. Uninstall and status also check the shared
+// file, where earlier versions installed.
 var ClaudeCode = Spec{
 	Agent: "claude-code",
 	ConfigPath: func(home, repo string, project bool) string {
 		if project {
-			return filepath.Join(repo, ".claude", "settings.json")
+			return filepath.Join(repo, ".claude", "settings.local.json")
 		}
 		return filepath.Join(home, ".claude", "settings.json")
+	},
+	OtherPaths: func(home, repo string, project bool) []string {
+		if project {
+			return []string{filepath.Join(repo, ".claude", "settings.json")}
+		}
+		return nil
 	},
 	Install: func(cfg map[string]any, bin string) (map[string]any, bool) {
 		return installEvents(cfg, claudeEvents, Command(bin, "claude-code"))
