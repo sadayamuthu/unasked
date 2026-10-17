@@ -196,15 +196,17 @@ when the better score is at least the low threshold, and `unasked` otherwise.
 High-risk hunks are stricter: only Test 1, your own words, can invite them,
 and if it doesn't they are `unasked`. Shared words alone aren't enough: one
 prompt must name the change specifically. For a deletion, that means a
-removal verb (`remove`, `delete`, `drop`, `deprecate`, ...) together with the
-whole removed name (`remove the X-Request-Id header`). A one-word name
-counts only with at least 4 letters and the verb within 5 words of it
-(`remove Close from the store interface`). A deletion with no removed name or
-string to quote can't be invited by your words at all. For a test file, a
-word like `test`, `spec`, `assert` or `coverage`; for a CI file, `CI`,
-`workflow`, `pipeline` or `GitHub Actions`; for a dependency change, its full
-name (`golang.org/x/time`, `@types/node`) or a word like `bump`, `upgrade` or
-`dependency`.
+removal verb in its plain form (`remove`, `delete`, `drop`, `deprecate`,
+`strip`, `eliminate`, `get rid of`, `clean out`, `rip out`) followed within
+four words by the whole removed name (`remove the deprecated X-Request-Id
+header`, `delete the legacyPing handler`); a one-word name needs at least 4
+letters. "the client drops the request id" doesn't count. A deletion with no
+removed name or string to quote can't be invited by your words at all. For a
+test file, a word like `test`, `spec`, `assert` or `coverage`; for a CI file,
+`CI`, `workflow`, `pipeline` or `GitHub Actions`; for a dependency change, a
+word like `bump`, `upgrade` or `dependency`, or the dependency's full name
+(`golang.org/x/time`, `@types/node`; a one-word name like `requests` only
+next to a word like `add`, `install` or `library`).
 Otherwise the hunk is `unasked` with reason `asked: generic overlap only`,
 while `asked` still shows the raw score. When there is no transcript or no
 usable prompt, high-risk hunks are `unasked` and everything else is

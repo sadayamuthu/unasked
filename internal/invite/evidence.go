@@ -2,6 +2,7 @@ package invite
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/kljensen/snowball/english"
@@ -17,32 +18,49 @@ const capMargin = 0.01
 
 // keywords match prompt words (see words). An entry is one or more
 // space-separated parts matched against consecutive words: a part ending in
-// "*" matches a word with that prefix ("deprecat*" → deprecated); any other
+// "*" matches a word with that prefix ("assert*" → assertions); any other
 // part matches a word with the same Snowball stem ("tests" → test).
 type keywords []string
 
 var (
-	removalVerbs = keywords{"remove", "delete", "drop", "deprecat*", "strip", "get rid of", "clean out",
-		"rip out", "eliminate", "unused"}
 	testWords = keywords{"test", "tests", "testing", "spec", "specs", "assert*", "coverage", "flaky"}
 	ciWords   = keywords{"ci", "workflow", "pipeline", "github action*"}
 	depWords  = keywords{"upgrad*", "bump", "downgrad*", "depend*"}
 )
 
-// verbWindow is how many words from a removal verb a one-word removed name
-// may stand (R36e).
-const verbWindow = 5
+// removalVerbs are the base (imperative) forms that can govern a removed
+// term (R36f), matched exactly as consecutive words: "drops", "removing" or
+// "unused" never count.
+var removalVerbs = [][]string{
+	{"remove"}, {"delete"}, {"drop"}, {"deprecate"}, {"strip"}, {"eliminate"},
+	{"get", "rid", "of"}, {"clean", "out"}, {"rip", "out"},
+}
 
-// minWordTerm is the fewest characters a one-word removed name needs to count
-// as naming the deletion (R36e).
-const minWordTerm = 4
+// installWords make a one-word dependency name count when one is within
+// depWindow words of it (R36f).
+var installWords = map[string]bool{
+	"add": true, "install": true, "dependency": true, "dependencies": true,
+	"package": true, "library": true, "bump": true, "upgrade": true, "pin": true,
+}
+
+const (
+	// verbReach: a removed term must start within this many words after the
+	// end of a removal verb (R36f).
+	verbReach = 4
+	// depWindow: a one-word dependency name needs an install word within
+	// this many words, either side (R36f).
+	depWindow = 3
+	// minWordTerm is the fewest characters a one-word removed name needs
+	// (R36e).
+	minWordTerm = 4
+)
+
+// termSeparators may stand between the words of a removed term written in
+// a prompt ("X-Request-Id", "x request id", "x_request.id").
+const termSeparators = " -_."
 
 // match reports whether any keyword occurs in ws.
-func (ks keywords) match(ws []string) bool { return len(ks.find(ws)) > 0 }
-
-// find returns the [start, end) word spans of every keyword occurrence in ws.
-func (ks keywords) find(ws []string) [][2]int {
-	var spans [][2]int
+func (ks keywords) match(ws []string) bool {
 	stems := make([]string, len(ws))
 	for i, w := range ws {
 		stems[i] = english.Stem(w, false)
@@ -64,11 +82,11 @@ func (ks keywords) find(ws []string) [][2]int {
 				}
 			}
 			if ok {
-				spans = append(spans, [2]int{i, i + len(parts)})
+				return true
 			}
 		}
 	}
-	return spans
+	return false
 }
 
 // words splits s into raw lowercased words on any non-letter/digit rune,
@@ -78,32 +96,54 @@ func words(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), notWordRune)
 }
 
-// nameWords is words with CamelCase runs split too, for matching names
-// ("X-Request-Id" → x, request, id; "legacyPing" → legacy, ping).
-func nameWords(s string) []string {
-	var out []string
-	for _, chunk := range strings.FieldsFunc(s, notWordRune) {
-		for _, w := range splitCamel(chunk) {
-			out = append(out, strings.ToLower(w))
+// word is one lowercased word of a text and its byte span in that text.
+type word struct {
+	w          string
+	start, end int
+}
+
+// scan splits s like words, also at CamelCase boundaries when camel is set
+// ("legacyPing" → legacy, ping), keeping each word's byte span.
+func scan(s string, camel bool) []word {
+	var out []word
+	i := 0
+	for i < len(s) {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if notWordRune(r) {
+			i += n
+			continue
 		}
+		j := i
+		for j < len(s) {
+			r, n := utf8.DecodeRuneInString(s[j:])
+			if notWordRune(r) {
+				break
+			}
+			j += n
+		}
+		parts := []string{s[i:j]}
+		if camel {
+			parts = splitCamel(s[i:j])
+		}
+		k := i
+		for _, p := range parts {
+			out = append(out, word{strings.ToLower(p), k, k + len(p)})
+			k += len(p)
+		}
+		i = j
 	}
 	return out
 }
 
 // evidence reports whether one prompt (text) asks for a high-risk hunk with
-// label l in file specifically (R36b–e). terms are the hunk's removed symbols
+// label l in file specifically (R36b–f). terms are the hunk's removed symbols
 // and literals, or its full dependency names (Input.Terms).
 //
-//   - deletion: the prompt names a removed term and has a removal verb
-//     (removalVerbs). A term of several words (nameWords) is named when all
-//     of its words are among the prompt's, or it occurs whole (see
-//     containsBounded), with the verb anywhere. A one-word term needs at
-//     least 4 characters and a verb within 5 words of it. No term, no
-//     evidence.
+//   - deletion: see namesDeletion.
 //   - test: in a CI file (model.IsCIPath) a CI word (ciWords); in any other
 //     test file a test word (testWords).
-//   - dependency: a dependency word (depWords), or a full dependency name
-//     occurring whole, ignoring case.
+//   - dependency: a dependency word (depWords), or a dependency's full name
+//     (see namesDependency).
 func evidence(l model.Label, file, text string, terms []string) bool {
 	switch l {
 	case model.LabelDeletion:
@@ -114,81 +154,134 @@ func evidence(l model.Label, file, text string, terms []string) bool {
 		}
 		return testWords.match(words(text))
 	case model.LabelDependency:
-		if depWords.match(words(text)) {
-			return true
-		}
-		lower := strings.ToLower(text)
-		for _, term := range terms {
-			if containsBounded(lower, strings.ToLower(term)) {
-				return true
-			}
-		}
-		return false
+		return depWords.match(words(text)) || namesDependency(text, terms)
 	}
 	return true
 }
 
-// namesDeletion applies the deletion rule of evidence.
+// namesDeletion reports whether a base-form removal verb governs a removed
+// term (R36f): the term starts within 4 words after the verb. The term is
+// found as a contiguous phrase of its words (CamelCase split, case ignored,
+// only termSeparators between them) or as the literal itself with no letter
+// or digit on either side. A one-word term needs at least 4 characters.
+// No term, no evidence.
 func namesDeletion(text string, terms []string) bool {
-	nw := nameWords(text)
-	verbs := removalVerbs.find(nw)
-	if len(verbs) == 0 {
-		return false
-	}
-	have := map[string]bool{}
-	for _, w := range nw {
-		have[w] = true
-	}
-	lower := strings.ToLower(text)
-	for _, term := range terms {
-		tw := nameWords(term)
-		switch {
-		case len(tw) == 0:
-		case len(tw) == 1:
-			if len([]rune(tw[0])) < minWordTerm {
+	ws := scan(text, true)
+	var verbEnds []int
+	for i := range ws {
+		for _, v := range removalVerbs {
+			if i+len(v) > len(ws) {
 				continue
 			}
-			for i, w := range nw {
-				if w != tw[0] {
-					continue
-				}
-				for _, v := range verbs {
-					if i >= v[0]-verbWindow && i < v[1]+verbWindow {
-						return true
-					}
-				}
-			}
-		default:
-			all := true
-			for _, w := range tw {
-				if !have[w] {
-					all = false
+			ok := true
+			for j, p := range v {
+				if ws[i+j].w != p {
+					ok = false
 					break
 				}
 			}
-			if all || containsBounded(lower, strings.ToLower(term)) {
-				return true
+			if ok {
+				verbEnds = append(verbEnds, i+len(v))
+			}
+		}
+	}
+	if len(verbEnds) == 0 {
+		return false
+	}
+	for _, term := range terms {
+		tw := scan(term, true)
+		if len(tw) == 0 || (len(tw) == 1 && utf8.RuneCountInString(tw[0].w) < minWordTerm) {
+			continue
+		}
+		for _, s := range termStarts(text, ws, term, tw) {
+			for _, e := range verbEnds {
+				if s >= e && s < e+verbReach {
+					return true
+				}
 			}
 		}
 	}
 	return false
 }
 
-// containsBounded reports whether sub occurs in s with no letter or digit
-// immediately before or after it.
-func containsBounded(s, sub string) bool {
-	for i := 0; sub != ""; {
-		j := strings.Index(s[i:], sub)
-		if j < 0 {
-			return false
+// termStarts returns the indexes in ws where term (its words tw) starts in
+// text, as a phrase or as the bounded literal.
+func termStarts(text string, ws []word, term string, tw []word) []int {
+	var out []int
+	for i := 0; i+len(tw) <= len(ws); i++ {
+		ok := true
+		for k := range tw {
+			if ws[i+k].w != tw[k].w ||
+				(k > 0 && strings.Trim(text[ws[i+k-1].end:ws[i+k].start], termSeparators) != "") {
+				ok = false
+				break
+			}
 		}
-		j += i
-		before, _ := utf8.DecodeLastRuneInString(s[:j])
-		after, _ := utf8.DecodeRuneInString(s[j+len(sub):])
-		if (j == 0 || notWordRune(before)) && (j+len(sub) == len(s) || notWordRune(after)) {
+		if ok {
+			out = append(out, i)
+		}
+	}
+	for _, p := range boundedIndexes(text, term) {
+		for i, w := range ws {
+			if w.end > p {
+				out = append(out, i)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// namesDependency reports whether the prompt names a dependency by its full
+// name (R36d, R36f): a name containing '/', '.', '@' or '-' counts wherever
+// it occurs bounded (case ignored); a one-word name counts only with an
+// install word (installWords) within 3 words of it.
+func namesDependency(text string, terms []string) bool {
+	ws := scan(text, false)
+	for _, term := range terms {
+		idx := boundedIndexes(text, term)
+		if len(idx) == 0 {
+			continue
+		}
+		if strings.ContainsAny(term, "/.@-") {
 			return true
 		}
-		i = j + 1
+		for _, p := range idx {
+			at := -1
+			for i, w := range ws {
+				if w.start == p {
+					at = i
+					break
+				}
+			}
+			for i := max(at-depWindow, 0); at >= 0 && i <= at+depWindow && i < len(ws); i++ {
+				if installWords[ws[i].w] {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
+
+// boundedIndexes returns the byte offsets where sub occurs in s, ignoring
+// case, with no letter or digit immediately before or after it.
+func boundedIndexes(s, sub string) []int {
+	var out []int
+	if sub == "" {
+		return nil
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if !strings.EqualFold(s[i:i+len(sub)], sub) {
+			continue
+		}
+		before, _ := utf8.DecodeLastRuneInString(s[:i])
+		after, _ := utf8.DecodeRuneInString(s[i+len(sub):])
+		if (i == 0 || !isWordRune(before)) && (i+len(sub) == len(s) || !isWordRune(after)) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
