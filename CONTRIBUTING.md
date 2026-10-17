@@ -249,6 +249,24 @@ The repository's social preview image is
 API for it: upload the PNG by hand in **Settings → General → Social preview**
 after changing it.
 
+## Release checklist
+
+The adapters are built for full support but stay marked **preview** until
+these hold for a release (spec §10):
+
+- [ ] **Real sessions:** at least 3 real (recorded and scrubbed, not
+      synthetic) labelled sessions per agent in `testdata/fixtures/`.
+- [ ] **Recalibrate** on them (`go test ./internal/fixtures -run TestCalibrate
+      -calibrate -v`) and update `invite.Default`. The current thresholds
+      (invite 0.20, low 0.15) sit at the bottom of the grid with a thin
+      margin, chosen on synthetic cases only (R37): zero misses there does
+      not yet show recall on real sessions.
+- [ ] Fixture gates: zero misses, false alarms under the ceiling, with no
+      override.
+- [ ] **Maintainer email** in `release.yml` and `packaging/nfpm.yaml`
+      confirmed as the public identity.
+- [ ] **Windows CI green**, including the hook command a PowerShell host runs.
+
 ## Security
 
 Please don't report security problems in a public issue. Use

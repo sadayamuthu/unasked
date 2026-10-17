@@ -166,10 +166,11 @@ Exit codes make it easy to script:
 | 2 | `unasked`: at least one hunk nobody asked for |
 | 3 | error or refused action (not a git repo, stale hunk id, a drop that wouldn't apply cleanly…) |
 
-Supported agents in this release: **Claude Code** and **Codex**, both at
-full level (prompts, the agent's words before each edit, and a stop hook
-that feeds the report back). Eleven more are planned; see
-[Supported agents](USAGE.md#supported-agents).
+Supported agents in this release: **Claude Code** and **Codex**, both built
+for full support (prompts, the agent's words before each edit, and a stop
+hook that feeds the report back) and marked **preview** until real recorded
+sessions validate it (see [CONTRIBUTING.md](CONTRIBUTING.md#release-checklist)).
+Eleven more are planned; see [Supported agents](USAGE.md#supported-agents).
 
 See **[USAGE.md](USAGE.md)** for every command and flag, the JSON output,
 hooks, the safety rules of `--drop` and `undo`, CI recipes and the capture

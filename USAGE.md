@@ -492,8 +492,12 @@ downloads the newest binary. For fully reproducible runs, pin both:
 
 | Agent | Level in this release | Sessions read from | Stop hook |
 |-------|-----------------------|--------------------|-----------|
-| Claude Code | **full** | `~/.claude/projects/<dir>/<session>.jsonl`, plus subagent transcripts | `Stop`, blocks with the report |
-| Codex | **full** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `Stop`, blocks with the report |
+| Claude Code | **full** (preview) | `~/.claude/projects/<dir>/<session>.jsonl`, plus subagent transcripts | `Stop`, blocks with the report |
+| Codex | **full** (preview) | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `Stop`, blocks with the report |
+
+Both are built for full support and marked preview until real recorded
+sessions validate it: so far they are calibrated on synthetic fixtures only
+(see the [release checklist](CONTRIBUTING.md#release-checklist)).
 
 Levels, from most to least: **full** (your prompts, the agent's words before
 each edit, and its edits), **report-only** (as full, but the hook can only
