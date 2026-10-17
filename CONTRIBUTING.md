@@ -274,7 +274,8 @@ Please don't report security problems in a public issue. Use
 [**Report a vulnerability**](https://github.com/sadayamuthu/unasked/security/advisories/new)
 on the repository's Security tab instead. That includes any way a transcript
 could leave `.git/unasked/` or be committed, and any way `--drop` or `undo`
-could leave the working tree in a state other than the one promised.
+could leave the working tree in a state other than the one promised. See
+[SECURITY.md](SECURITY.md) for what to include and what's in scope.
 
 ## License
 

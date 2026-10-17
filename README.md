@@ -175,7 +175,8 @@ Eleven more are planned; see [Supported agents](USAGE.md#supported-agents).
 See **[USAGE.md](USAGE.md)** for every command and flag, the JSON output,
 hooks, the safety rules of `--drop` and `undo`, CI recipes and the capture
 store. To report a wrong verdict or add an agent, see
-**[CONTRIBUTING.md](CONTRIBUTING.md)**.
+**[CONTRIBUTING.md](CONTRIBUTING.md)**; for a security problem, see
+**[SECURITY.md](SECURITY.md)**.
 
 ## Development
 
