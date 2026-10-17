@@ -266,7 +266,8 @@
     "binary": 1
   },
   "warnings": [
-    "pre-existing changes may be included"
+    "pre-existing changes may be included",
+    "1 binary file(s) changed — not judged"
   ],
   "turns": 41,
   "duration": "22 min"

@@ -18,7 +18,7 @@ func mdHunk(w io.Writer, h HunkJSON) {
 		if h.Tell != nil {
 			tell = *h.Tell
 		}
-		fmt.Fprintf(w, "  - agent said: \"%s\"\n", markTell(h.Statement, tell, "_", "_"))
+		fmt.Fprintf(w, "  - agent said: \"%s\"\n", markTell(oneLine(h.Statement), tell, "_", "_"))
 	}
 }
 

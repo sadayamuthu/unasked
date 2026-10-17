@@ -105,11 +105,28 @@ func TestResultAndExitCode(t *testing.T) {
 		{"diffonly zero hunks", nil, adapter.DiffOnly, "clean", 0},
 		{"invited", mk(model.VerdictInvited), adapter.Full, "clean", 0},
 		{"collateral only", []model.Scored{coll}, adapter.Full, "clean", 0},
+		{"none transcript all invited", mk(model.VerdictInvited), -1, "unclear", 1},
+		{"diffonly all invited", mk(model.VerdictInvited), adapter.DiffOnly, "unclear", 1},
+		{"degraded partial all invited", mk(model.VerdictInvited), -2, "clean", 0},
+		{"binary only", nil, adapter.Full, "unclear", 1},
+		{"binary plus unasked", mk(model.VerdictUnasked), adapter.Full, "unasked", 2},
 		{"unclear", mk(model.VerdictInvited, model.VerdictUnclear), adapter.Full, "unclear", 1},
 		{"unasked", mk(model.VerdictUnclear, model.VerdictUnasked), adapter.Full, "unasked", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sel := &adapter.Selection{Transcript: &model.Transcript{}, Caps: adapter.Capabilities{Level: tc.level}}
+			switch tc.level {
+			case -1: // no session
+				sel.Caps.Level = adapter.Full
+			case -2: // degraded session
+				sel.Caps = adapter.Capabilities{Level: adapter.Partial, Degraded: "unknown record"}
+				sel.Sessions = []adapter.Session{{Agent: "x"}}
+			default:
+				sel.Sessions = []adapter.Session{{Agent: "x"}}
+			}
+			if strings.HasPrefix(tc.name, "binary") {
+				sel.Binary = 2
+			}
 			r := Build(sel, tc.scored, nil)
 			if r.Result != tc.result || r.ExitCode() != tc.code {
 				t.Fatalf("got %s/%d want %s/%d", r.Result, r.ExitCode(), tc.result, tc.code)
@@ -279,8 +296,21 @@ func TestSaveLoadLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(g.GitDir, "unasked", "last.json")
-	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 && os.PathSeparator == '/' {
+	if fi, err := os.Stat(p); err != nil || (fi.Mode().Perm() != 0o600 && os.PathSeparator == '/') {
 		t.Fatalf("%v %v", fi, err)
+	}
+	r2 := Build(sel, s[:1], k)
+	if err := SaveLast(g, r2); err != nil {
+		t.Fatal(err)
+	}
+	if back, err := LoadLast(g); err != nil || len(back.Hunks) != 1 {
+		t.Fatalf("overwrite: %v %v", back, err)
+	}
+	if err := SaveLast(g, r); err != nil {
+		t.Fatal(err)
+	}
+	if ents, _ := os.ReadDir(filepath.Dir(p)); len(ents) != 1 {
+		t.Fatalf("stray files: %v", ents)
 	}
 	back, err := LoadLast(g)
 	if err != nil {

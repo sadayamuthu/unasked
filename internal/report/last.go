@@ -14,12 +14,15 @@ const lastFile = "last.json"
 
 var hashRe = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
+func lastPath(g *gitx.Repo) string { return filepath.Join(g.GitDir, "unasked", lastFile) }
+
 // SaveLast writes the report to <git-dir>/unasked/last.json atomically, mode 0600.
 func SaveLast(g *gitx.Repo, r *Report) error {
 	dir, err := g.UnaskedDir()
 	if err != nil {
 		return err
 	}
+	path := lastPath(g)
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
@@ -43,7 +46,7 @@ func SaveLast(g *gitx.Repo, r *Report) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, lastFile)); err != nil {
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}
@@ -52,7 +55,7 @@ func SaveLast(g *gitx.Repo, r *Report) error {
 
 // LoadLast reads the report saved by SaveLast.
 func LoadLast(g *gitx.Repo) (*Report, error) {
-	b, err := os.ReadFile(filepath.Join(g.GitDir, "unasked", lastFile))
+	b, err := os.ReadFile(lastPath(g))
 	if err != nil {
 		return nil, err
 	}

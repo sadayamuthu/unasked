@@ -5,9 +5,11 @@ transcript: present · adapter level: full
 
 > warning: pre-existing changes may be included
 
+> warning: 1 binary file(s) changed — not judged
+
 > You asked: "Add rate limiting to the public API: 60/min anon, 600/min keyed, 429 + Retry-After, limits configurable via env."
 
-11 hunks changed · 8 invited · 2 unasked · 1 unclear
+11 hunks changed · 8 invited · 2 unasked · 1 unclear · 1 binary
 
 #### UNASKED
 

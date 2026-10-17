@@ -179,6 +179,16 @@ func Build(sel *adapter.Selection, scored []model.Scored, kept []keep.Entry) *Re
 	default:
 		r.Result = ResultClean // includes DiffOnly with zero hunks: nothing to judge
 	}
+	if r.Result == ResultClean && r.Stats.Hunks > 0 && (r.Transcript == "none" || sel.Caps.Level == adapter.DiffOnly) {
+		r.Result = ResultUnclear
+		r.Warnings = append(r.Warnings, "no transcript: hunks could not be checked against your prompts")
+	}
+	if r.Stats.Binary > 0 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("%d binary file(s) changed — not judged", r.Stats.Binary))
+		if r.Result == ResultClean {
+			r.Result = ResultUnclear
+		}
+	}
 	return r
 }
 
@@ -245,8 +255,12 @@ func (r *Report) collateralHunks() []HunkJSON {
 }
 
 func (r *Report) countsLine() string {
-	return fmt.Sprintf("%d hunks changed · %d invited · %d unasked · %d unclear",
+	s := fmt.Sprintf("%d hunks changed · %d invited · %d unasked · %d unclear",
 		r.Stats.Hunks, r.Stats.Invited, r.Stats.Unasked, r.Stats.Unclear)
+	if r.Stats.Binary > 0 {
+		s += fmt.Sprintf(" · %d binary", r.Stats.Binary)
+	}
+	return s
 }
 
 func (r *Report) sessionLine() string {
@@ -306,12 +320,15 @@ func (r *Report) firstPrompt(width int) []string {
 func (h HunkJSON) location() string { return h.File + ":" + h.Lines }
 
 func (h HunkJSON) blurb() string {
-	s := h.Summary
+	s := oneLine(h.Summary)
 	if s == "" {
-		s = h.Reason
+		s = oneLine(h.Reason)
 	}
 	if h.HighRisk {
 		s = "⚠ " + s
 	}
 	return s
 }
+
+// oneLine collapses all whitespace, including newlines, to single spaces.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

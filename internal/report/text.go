@@ -45,7 +45,7 @@ func writeHunkText(w io.Writer, h HunkJSON, color bool) {
 		if h.Tell != nil {
 			tell = *h.Tell
 		}
-		fmt.Fprintf(w, "        agent said: \"%s\"\n", markTell(h.Statement, tell, on, off))
+		fmt.Fprintf(w, "        agent said: \"%s\"\n", markTell(oneLine(h.Statement), tell, on, off))
 	}
 }
 
@@ -89,6 +89,7 @@ func WriteText(w io.Writer, r *Report, all bool, color bool) error {
 	}
 	fmt.Fprintln(bw)
 	fmt.Fprintln(bw, r.countsLine())
+	fmt.Fprintf(bw, "result: %s\n", r.Result)
 
 	unasked := r.byVerdict(model.VerdictUnasked)
 	unclear := r.byVerdict(model.VerdictUnclear)
@@ -108,7 +109,7 @@ func WriteText(w io.Writer, r *Report, all bool, color bool) error {
 		if inv := r.byVerdict(model.VerdictInvited); len(inv) > 0 {
 			fmt.Fprintln(bw, "\nINVITED")
 			for _, h := range inv {
-				fmt.Fprintln(bw, strings.TrimRight(fmt.Sprintf("  %s  %s   %s  %s", h.ID, h.location(), h.Label, h.Summary), " "))
+				fmt.Fprintln(bw, strings.TrimRight(fmt.Sprintf("  %s  %s   %s  %s", h.ID, h.location(), h.Label, oneLine(h.Summary)), " "))
 				if h.Reason != "" {
 					fmt.Fprintf(bw, "        why: %s\n", h.Reason)
 				}
