@@ -60,11 +60,11 @@ func TestIDFDownweightsCommon(t *testing.T) {
 }
 
 func TestThresholdsShift(t *testing.T) {
-	s := Default.Shift(Step)
+	s := ruleTh.Shift(Step)
 	if math.Abs(s.Invite-0.50) > 1e-9 || math.Abs(s.Low-0.30) > 1e-9 {
 		t.Errorf("strict = %+v", s)
 	}
-	l := Default.Shift(-Step).Shift(-Step)
+	l := ruleTh.Shift(-Step).Shift(-Step)
 	if math.Abs(l.Invite-0.20) > 1e-9 || l.Low != 0.05 {
 		t.Errorf("lenient twice = %+v, want Low floored at 0.05", l)
 	}
@@ -85,7 +85,7 @@ func TestSpecWorkedExample(t *testing.T) {
 	}
 	calls := 0
 	got := Score(Input{
-		Hunks: []model.Hunk{h}, Transcript: tr, Th: Default, Tells: tells,
+		Hunks: []model.Hunk{h}, Transcript: tr, Th: ruleTh, Tells: tells,
 		Classify: func(model.Hunk) (model.Label, bool) { calls++; return model.LabelDeletion, true },
 	})
 	if calls != 1 {
@@ -118,7 +118,7 @@ func TestScoreInvitesAskedHunk(t *testing.T) {
 		},
 	}
 	tells, _ := LoadTells("")
-	got := Score(Input{Hunks: []model.Hunk{h, other}, Transcript: tr, Th: Default, Tells: tells, Classify: notRisky})
+	got := Score(Input{Hunks: []model.Hunk{h, other}, Transcript: tr, Th: ruleTh, Tells: tells, Classify: notRisky})
 	if got[0].Verdict != model.VerdictInvited || got[0].Reason != "asked: turn 2" || got[0].Turn != 2 {
 		t.Errorf("h01 = %s %q turn %d (asked %.2f)", got[0].Verdict, got[0].Reason, got[0].Turn, got[0].Asked)
 	}
@@ -133,7 +133,7 @@ func TestScoreShortStatementSaysNothing(t *testing.T) {
 		Prompts: []model.Prompt{{Turn: 1, Text: "Add rate limiting to the public API with configurable env limits"}},
 		Edits:   []model.EditEvent{{Turn: 2, File: h.File, After: h.Added[0], Statement: "Updating the API."}},
 	}
-	got := Score(Input{Hunks: []model.Hunk{h}, Transcript: tr, Th: Default, Classify: notRisky})
+	got := Score(Input{Hunks: []model.Hunk{h}, Transcript: tr, Th: ruleTh, Classify: notRisky})
 	if got[0].Said != 0 || got[0].Verdict == model.VerdictInvited {
 		t.Errorf("short statement: said=%.2f verdict=%s (%s)", got[0].Said, got[0].Verdict, got[0].Reason)
 	}
@@ -147,13 +147,13 @@ func TestScorePromptFiltering(t *testing.T) {
 		"report": {{Turn: 1, Text: "[unasked report] fix bug parser crash header tokens"}},
 		"none":   nil,
 	} {
-		got := Score(Input{Hunks: []model.Hunk{h}, Th: Default, Classify: notRisky,
+		got := Score(Input{Hunks: []model.Hunk{h}, Th: ruleTh, Classify: notRisky,
 			Transcript: &model.Transcript{Prompts: prompts}})
 		if got[0].AskedKnown || got[0].Verdict != model.VerdictUnclear || got[0].Reason != "no usable prompt" {
 			t.Errorf("%s: %+v", name, got[0])
 		}
 		// An aligned event changes nothing: no usable prompt is rule 1 (§6.4).
-		got = Score(Input{Hunks: []model.Hunk{h}, Th: Default, Classify: notRisky,
+		got = Score(Input{Hunks: []model.Hunk{h}, Th: ruleTh, Classify: notRisky,
 			Transcript: &model.Transcript{Prompts: prompts, Edits: []model.EditEvent{ev}}})
 		if got[0].AskedKnown || got[0].Event == nil || got[0].Verdict != model.VerdictUnclear || got[0].Reason != "no usable prompt" {
 			t.Errorf("%s with event: %+v", name, got[0])
@@ -163,7 +163,7 @@ func TestScorePromptFiltering(t *testing.T) {
 
 func TestScoreDiffOnly(t *testing.T) {
 	hs := []model.Hunk{{ID: "h01", File: "a.go", Added: []string{"x()"}}, {ID: "h02", File: "a_test.go", Added: []string{"y()"}}}
-	got := Score(Input{Hunks: hs, Th: Default, DiffOnly: true, Classify: func(h model.Hunk) (model.Label, bool) {
+	got := Score(Input{Hunks: hs, Th: ruleTh, DiffOnly: true, Classify: func(h model.Hunk) (model.Label, bool) {
 		if h.ID == "h02" {
 			return model.LabelTest, true
 		}
@@ -175,6 +175,27 @@ func TestScoreDiffOnly(t *testing.T) {
 	for _, s := range got {
 		if s.Reason != "no usable prompt" {
 			t.Errorf("%s reason = %q", s.Hunk.ID, s.Reason)
+		}
+	}
+}
+
+// Overlap sums in input order, so equal inputs give bit-identical scores
+// (the JSON report is reproducible); map order would vary the last bits.
+func TestOverlapDeterministic(t *testing.T) {
+	var a, b []string
+	w := map[string]float64{}
+	for i := 0; i < 60; i++ {
+		tok := fmt.Sprintf("t%d", i)
+		w[tok] = 1 / float64(i+3)
+		a = append(a, tok)
+		if i%2 == 0 {
+			b = append(b, tok)
+		}
+	}
+	first := Overlap(a, b, w)
+	for i := 0; i < 200; i++ {
+		if got := Overlap(a, b, w); got != first {
+			t.Fatalf("run %d: %v != %v", i, got, first)
 		}
 	}
 }

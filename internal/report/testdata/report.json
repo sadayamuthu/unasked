@@ -15,7 +15,7 @@
     "base_source": "captured"
   },
   "thresholds": {
-    "invite": 0.4,
+    "invite": 0.35,
     "low": 0.2
   },
   "prompts": [

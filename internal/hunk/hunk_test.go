@@ -3,6 +3,7 @@ package hunk
 import (
 	"bytes"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -313,5 +314,35 @@ func TestRenamedFileHunksApplyIndependently(t *testing.T) {
 	}
 	if _, err := r.RunEnv(nil, bytes.NewReader(hs[1].Patch), "apply", "--unidiff-zero", "-R", "--check"); err != nil {
 		t.Errorf("second hunk after first: %v", err)
+	}
+}
+
+// blobs reads many files with one git process and must answer exactly as
+// one `git cat-file blob` per path would.
+func TestBlobsMatchesCatFile(t *testing.T) {
+	g := gittest.New(t)
+	g.Write("plain.go", "package p\n")
+	g.Write("dir/with space é.txt", "unicode path\n")
+	g.WriteBytes("bin.dat", []byte("a\x00b\nc\n\nno newline at end"))
+	g.Write("empty.txt", "")
+	paths := []string{"plain.go", "dir/with space é.txt", "bin.dat", "empty.txt", "dir", "missing.txt"}
+	if runtime.GOOS != "windows" {
+		g.Write("new\nline.txt", "newline in the name\n")
+		paths = append(paths, "new\nline.txt")
+	}
+	g.Commit("files")
+	r, err := gitx.Open(g.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := g.Git("rev-parse", "HEAD^{tree}")
+	got := blobs(r, tree, paths)
+	for _, p := range paths {
+		if want := blob(r, tree, p); !bytes.Equal(got[p], want) {
+			t.Errorf("%q: batch %q, cat-file %q", p, got[p], want)
+		}
+	}
+	if got["dir"] != nil || got["missing.txt"] != nil {
+		t.Errorf("non-blob or missing path returned content: %q %q", got["dir"], got["missing.txt"])
 	}
 }

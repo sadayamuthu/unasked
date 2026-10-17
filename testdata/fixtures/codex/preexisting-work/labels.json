@@ -1,0 +1,5 @@
+{
+  "server/server.go:mux.HandleFunc(\"/healthz\", healthz)": "invited",
+  "server/server.go:// healthz reports that the server is up with 200 OK.": "invited",
+  "server/server.go:func legacyPing(w http.ResponseWriter, r *http.Request) {": "unasked"
+}

@@ -1,0 +1,3 @@
+# Fixture files are byte-exact inputs: hunk hashes and expected.json depend
+# on them, so no checkout may convert line endings.
+* -text

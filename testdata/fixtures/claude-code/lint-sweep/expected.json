@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "agent": "claude-code",
+  "session": "lint-sweep",
+  "transcript": "present",
+  "adapter": {
+    "name": "claude-code",
+    "version": "2.1.289",
+    "level": "full",
+    "degraded_reason": ""
+  },
+  "range": {
+    "base": "99f2d8e56516620a3ce8234b689f087e82fc287c",
+    "head": "158ab1836d7359c6999672e1a1d98734794c8a5d",
+    "base_source": "captured"
+  },
+  "thresholds": {
+    "invite": 0.35,
+    "low": 0.2
+  },
+  "prompts": [
+    {
+      "turn": 1,
+      "text": "Fix the off-by-one in Pages in internal/page/page.go: when total is an exact multiple of size the page count is one too high."
+    }
+  ],
+  "result": "unclear",
+  "hunks": [
+    {
+      "id": "h01",
+      "file": "internal/page/page.go",
+      "lines": "8-8",
+      "verdict": "invited",
+      "label": "refactor",
+      "asked": 1,
+      "said": 0.24953458894634684,
+      "tell": null,
+      "statement": "Pages adds one page even when total divides evenly; I'll use ceiling division instead.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "changed body of Pages",
+      "reason": "asked: turn 1",
+      "hash": "fd2fa86772dc",
+      "high_risk": false
+    },
+    {
+      "id": "h02",
+      "file": "internal/report/format.go",
+      "lines": "7-7",
+      "verdict": "unclear",
+      "label": "collateral",
+      "severity": "warning",
+      "asked": 0.05108445984219003,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "summary": "formatting/import changes in internal/report/format.go",
+      "reason": "no agent edit found",
+      "hash": "ed620a8f2f0f",
+      "high_risk": false
+    },
+    {
+      "id": "h03",
+      "file": "internal/store/item.go",
+      "lines": "5-6",
+      "verdict": "unclear",
+      "label": "collateral",
+      "severity": "warning",
+      "asked": 0.06697220023182478,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "summary": "formatting/import changes in internal/store/item.go",
+      "reason": "no agent edit found",
+      "hash": "5897815f6d96",
+      "high_risk": false
+    }
+  ],
+  "kept": [],
+  "stats": {
+    "hunks": 3,
+    "invited": 1,
+    "unasked": 0,
+    "unclear": 2,
+    "collateral": 0,
+    "binary": 0
+  },
+  "warnings": [],
+  "turns": 1,
+  "duration": "35 sec"
+}

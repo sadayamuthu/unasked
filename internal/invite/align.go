@@ -18,7 +18,10 @@ const lcsMin = 0.8
 //  1. the first event whose After contains all of h's Added lines joined by
 //     "\n" as a substring (CRLF in After is normalised to LF);
 //  2. else the first event with LCS(added lines, After lines)/len(added) ≥ 0.8;
-//  3. else nil.
+//  3. else the first event that covers every non-blank added line (see
+//     covers): Claude Code's Edit replaces any unique substring, so
+//     new_string often starts or ends mid-line or drops indentation;
+//  4. else nil.
 //
 // A pure deletion (no Added lines) aligns to the latest same-file event: the
 // edit that removed text leaves nothing to match on.
@@ -58,7 +61,60 @@ func Align(h model.Hunk, edits []model.EditEvent) *model.EditEvent {
 			return &edits[i]
 		}
 	}
+	for _, i := range order {
+		if covers(edits[i].After, h.Added) {
+			return &edits[i]
+		}
+	}
 	return nil
+}
+
+// covers reports whether an edit's After text, read as a substring of the
+// new file, accounts for every non-blank added line. Lines are compared
+// trimmed. A one-line After covers a line containing it; otherwise a line is
+// covered when it equals an After line, ends with the first After line (the
+// edit began mid-line) or starts with the last (it ended mid-line). A
+// fragment match needs a content token, and so does at least one covered
+// line, so "}" or ")" alone aligns nothing.
+func covers(after string, added []string) bool {
+	var ev []string
+	for _, l := range strings.Split(normalizeEOL(after), "\n") {
+		ev = append(ev, strings.TrimSpace(l))
+	}
+	for len(ev) > 0 && ev[len(ev)-1] == "" {
+		ev = ev[:len(ev)-1]
+	}
+	for len(ev) > 0 && ev[0] == "" {
+		ev = ev[1:]
+	}
+	if len(ev) == 0 {
+		return false
+	}
+	first, last := ev[0], ev[len(ev)-1]
+	whole := map[string]bool{}
+	for _, l := range ev {
+		whole[l] = true
+	}
+	frag := func(f string) bool { return f != "" && len(Tokens(f)) > 0 }
+	content := false
+	for _, l := range added {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		switch {
+		case len(ev) == 1 && frag(first) && strings.Contains(l, first):
+		case len(ev) > 1 && (whole[l] ||
+			frag(first) && strings.HasSuffix(l, first) ||
+			frag(last) && strings.HasPrefix(l, last)):
+		default:
+			return false
+		}
+		if len(Tokens(l)) > 0 {
+			content = true
+		}
+	}
+	return content
 }
 
 func normalizeEOL(s string) string {

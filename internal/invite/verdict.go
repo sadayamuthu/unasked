@@ -68,8 +68,19 @@ func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscri
 //     runs of whitespace and trimming.
 //
 // A same-name signature change (N == S) therefore only matches whitespace-only
-// edits: a caller that gains an argument is listed, not auto-invited. Hunks
-// promoted in this pass never promote others. The input is not modified.
+// edits: a caller that gains an argument is listed, not auto-invited.
+//
+// The pass also promotes a new helper the invited change calls: H is
+// invited with reason "required by <I.ID>" when an agent edit produced it
+// (H.Event is set), it removes no lines, adds at least one symbol, and every
+// symbol it adds is called, as a whole word, from the added lines of a hunk
+// in the same file invited before this pass (I). Same file only, so a common
+// name defined here cannot be tied to an unrelated call elsewhere. A hunk
+// that merely calls new invited code is not forced; only definitions are,
+// and never ones no agent edit explains.
+//
+// Hunks promoted in this pass never promote others. The input is not
+// modified.
 func Forced(s []model.Scored) []model.Scored {
 	out := append([]model.Scored(nil), s...)
 	type source struct {
@@ -96,7 +107,13 @@ func Forced(s []model.Scored) []model.Scored {
 	}
 	for i := range out {
 		h := &out[i]
-		if h.Verdict == model.VerdictInvited || h.HighRisk || len(h.Hunk.Removed) == 0 {
+		if h.Verdict == model.VerdictInvited || h.HighRisk {
+			continue
+		}
+		if len(h.Hunk.Removed) == 0 {
+			if id := helperOf(h.Hunk, s); id != "" && h.Event != nil {
+				h.Verdict, h.Reason = model.VerdictInvited, "required by "+id
+			}
 			continue
 		}
 		for _, src := range sources {
@@ -107,6 +124,38 @@ func Forced(s []model.Scored) []model.Scored {
 		}
 	}
 	return out
+}
+
+// helperOf returns the ID of the first hunk in h's file invited in s whose
+// added lines call every symbol h adds, or "" when there is none.
+func helperOf(h model.Hunk, s []model.Scored) string {
+	if len(h.Symbols.Added) == 0 {
+		return ""
+	}
+	for _, sc := range s {
+		if sc.Verdict != model.VerdictInvited || sc.Hunk.ID == h.ID || sc.Hunk.File != h.File {
+			continue
+		}
+		all := true
+		for _, sym := range h.Symbols.Added {
+			name := bareName(sym)
+			called := false
+			for _, l := range sc.Hunk.Added {
+				if name != "" && replaceWord(l, name, "") != l {
+					called = true
+					break
+				}
+			}
+			if !called {
+				all = false
+				break
+			}
+		}
+		if all {
+			return sc.Hunk.ID
+		}
+	}
+	return ""
 }
 
 // bareName is the referenced part of a symbol: "T.Method" is called as
@@ -153,21 +202,23 @@ func replaceWord(s, old, repl string) string {
 		return s
 	}
 	var b strings.Builder
+	i := 0 // s[:i] is written; the rune before a match is read from all of s
 	for {
-		j := strings.Index(s, old)
+		j := strings.Index(s[i:], old)
 		if j < 0 {
-			b.WriteString(s)
+			b.WriteString(s[i:])
 			return b.String()
 		}
+		j += i
 		before, _ := utf8.DecodeLastRuneInString(s[:j])
 		after, _ := utf8.DecodeRuneInString(s[j+len(old):])
-		b.WriteString(s[:j])
+		b.WriteString(s[i:j])
 		if (j == 0 || !identRune(before)) && (j+len(old) == len(s) || !identRune(after)) {
 			b.WriteString(repl)
 		} else {
 			b.WriteString(old)
 		}
-		s = s[j+len(old):]
+		i = j + len(old)
 	}
 }
 

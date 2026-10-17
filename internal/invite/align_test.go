@@ -75,3 +75,45 @@ func TestAlignCRLF(t *testing.T) {
 		t.Error("CRLF After should align")
 	}
 }
+
+// Claude Code's Edit tool replaces any unique substring, so new_string is
+// often part of a line ("users.FetchUser(ctx") or a line without its
+// indentation. Such an edit aligns to the hunk whose added text contains it.
+func TestAlignPartialLineEdit(t *testing.T) {
+	h := model.Hunk{File: "a.go", Added: []string{"\tu, err := users.FetchUser(ctx, id)"}}
+	frag := model.EditEvent{Turn: 1, File: "a.go", After: "users.FetchUser(ctx", Statement: "frag"}
+	if got := Align(h, []model.EditEvent{frag}); got == nil || got.Statement != "frag" {
+		t.Errorf("fragment edit did not align: %+v", got)
+	}
+	unindented := model.EditEvent{Turn: 1, File: "a.go", After: "u, err := users.FetchUser(ctx, id)\n", Statement: "noindent"}
+	if got := Align(h, []model.EditEvent{unindented}); got == nil || got.Statement != "noindent" {
+		t.Errorf("unindented edit did not align: %+v", got)
+	}
+	// Exact containment still wins over a fragment.
+	whole := model.EditEvent{Turn: 1, File: "a.go", After: "\tu, err := users.FetchUser(ctx, id)", Statement: "whole"}
+	if got := Align(h, []model.EditEvent{whole, frag}); got == nil || got.Statement != "whole" {
+		t.Errorf("fragment beat an exact match: %+v", got)
+	}
+	// A multi-line edit that ends mid-line covers the line it starts.
+	logLine := model.Hunk{File: "a.go", Added: []string{"\t\tlog.Printf(\"%s\", start.Format(time.RFC3339Nano), r.Method)"}}
+	multi := model.EditEvent{Turn: 1, File: "a.go", After: "start := time.Now().UTC()\n\t\tnext()\n\t\tlog.Printf(\"%s\", start.Format(time.RFC3339Nano),", Statement: "multi"}
+	if got := Align(logLine, []model.EditEvent{multi}); got == nil || got.Statement != "multi" {
+		t.Errorf("edit ending mid-line did not align: %+v", got)
+	}
+	// ...but not a line it does not reach.
+	other := model.Hunk{File: "a.go", Added: []string{"\treturn nil"}}
+	if got := Align(other, []model.EditEvent{multi}); got != nil {
+		t.Errorf("edit aligned to a line it does not cover: %+v", got)
+	}
+	// A fragment without a content token ("}", "(") aligns nothing, nor does
+	// one from another file or one the hunk does not contain.
+	for _, ev := range []model.EditEvent{
+		{Turn: 1, File: "a.go", After: ")"},
+		{Turn: 1, File: "b.go", After: "users.FetchUser(ctx"},
+		{Turn: 1, File: "a.go", After: "users.GetUser(ctx"},
+	} {
+		if got := Align(h, []model.EditEvent{ev}); got != nil {
+			t.Errorf("%+v aligned", ev)
+		}
+	}
+}

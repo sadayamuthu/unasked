@@ -6,6 +6,9 @@ import (
 	"github.com/sadayamuthu/unasked/internal/model"
 )
 
+// ruleTh is a fixed pair for rule tests, independent of the calibrated Default.
+var ruleTh = Thresholds{Invite: 0.40, Low: 0.20}
+
 func TestVerdictRules(t *testing.T) {
 	ev := &model.EditEvent{Turn: 7, File: "a.go"}
 	cases := []struct {
@@ -36,7 +39,7 @@ func TestVerdictRules(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := c.s
-		decide(&s, 3, Default, c.diffOnly, !c.noTranscript)
+		decide(&s, 3, ruleTh, c.diffOnly, !c.noTranscript)
 		if s.Verdict != c.want {
 			t.Errorf("%s: verdict = %s (%q), want %s", c.name, s.Verdict, s.Reason, c.want)
 		}
@@ -130,5 +133,79 @@ func TestForcedSignatureChangeNewArgNotPromoted(t *testing.T) {
 		Removed: []string{"Foo(a)"}, Added: []string{"Foo(a, ctx)"}}, Verdict: model.VerdictUnasked}
 	if got := Forced([]model.Scored{def, caller}); got[1].Verdict == model.VerdictInvited {
 		t.Errorf("caller gaining ctx promoted: %+v", got[1])
+	}
+}
+
+// A new helper whose every symbol is called from an invited hunk's added
+// lines is forced by that hunk (one hop, never high-risk, pure additions).
+func TestForcedHelperDefinition(t *testing.T) {
+	user := model.Scored{Hunk: model.Hunk{ID: "h01", File: "config.go",
+		Added: []string{"\tc.Window = parseDuration(v, time.Minute)", "\tc.Rate = cfg.envInt(\"RATE\", 60)"}},
+		Verdict: model.VerdictInvited, Reason: "asked: turn 1"}
+	helper := func(id string, syms []string, removed []string) model.Scored {
+		return model.Scored{Hunk: model.Hunk{ID: id, File: "config.go",
+			Added:   []string{"// helper", "func x() {}"},
+			Removed: removed, Symbols: model.SymbolDelta{Added: syms}},
+			Event:   &model.EditEvent{Turn: 1, File: "config.go"},
+			Verdict: model.VerdictUnclear, Reason: "weak match"}
+	}
+	noEdit := helper("h09", []string{"parseDuration"}, nil)
+	noEdit.Event, noEdit.Reason = nil, "no agent edit found"
+	elsewhere := helper("h10", []string{"parseDuration"}, nil)
+	elsewhere.Hunk.File = "util.go"
+	risky := helper("h06", []string{"parseDuration"}, nil)
+	risky.HighRisk, risky.Verdict = true, model.VerdictUnasked
+	in := []model.Scored{user,
+		helper("h02", []string{"parseDuration"}, nil),                  // promoted
+		helper("h03", []string{"Config.envInt"}, nil),                  // method: promoted by bare name
+		helper("h04", []string{"parseDuration", "unused"}, nil),        // one symbol nobody calls
+		helper("h05", []string{"parseDuration"}, []string{"old := 1"}), // also removes code
+		risky,
+		helper("h07", []string{"parseDur"}, nil), // only a substring of a call
+		helper("h08", nil, nil),                  // no symbols: nothing to tie it to
+		noEdit,                                   // no agent edit wrote it
+		elsewhere,                                // defined in another file
+	}
+	got := Forced(in)
+	for i, want := range []bool{true, true, true, false, false, false, false, false, false, false} {
+		if (got[i].Verdict == model.VerdictInvited) != want {
+			t.Errorf("%s: verdict %s %q, want invited=%v", got[i].Hunk.ID, got[i].Verdict, got[i].Reason, want)
+		}
+	}
+	if got[1].Reason != "required by h01" {
+		t.Errorf("reason %q", got[1].Reason)
+	}
+
+	// One hop: a helper called only from a hunk promoted in this pass stays.
+	def := model.Scored{Hunk: model.Hunk{ID: "h01", File: "config.go", Removed: []string{"func Foo() {"}, Added: []string{"func Bar() {"},
+		Symbols: model.SymbolDelta{Removed: []string{"Foo"}, Added: []string{"Bar"}}}, Verdict: model.VerdictInvited}
+	caller := model.Scored{Hunk: model.Hunk{ID: "h02", File: "config.go", Removed: []string{"Foo(newHelper())"}, Added: []string{"Bar(newHelper())"}},
+		Verdict: model.VerdictUnasked}
+	h := helper("h03", []string{"newHelper"}, nil)
+	got = Forced([]model.Scored{def, caller, h})
+	if got[1].Verdict != model.VerdictInvited || got[2].Verdict == model.VerdictInvited {
+		t.Errorf("one-hop violated: caller %s, helper %s", got[1].Verdict, got[2].Verdict)
+	}
+}
+
+// replaceWord must keep the rune before each match: "FooFoo" holds no
+// whole-word Foo, so it is not a Foo→Bar reference update.
+func TestReplaceWordAdjacentMatches(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"FooFoo", "FooFoo"},
+		{"xFooFoo Foo", "xFooFoo Bar"},
+		{"Foo Foo", "Bar Bar"},
+		{"Foo(Foo)", "Bar(Bar)"},
+		{"aFoo", "aFoo"},
+	} {
+		if got := replaceWord(tc.in, "Foo", "Bar"); got != tc.want {
+			t.Errorf("replaceWord(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	def := model.Scored{Hunk: model.Hunk{ID: "h01", Symbols: model.SymbolDelta{Removed: []string{"Foo"}, Added: []string{"Bar"}}},
+		Verdict: model.VerdictInvited}
+	h := model.Scored{Hunk: model.Hunk{ID: "h02", Removed: []string{"FooFoo()"}, Added: []string{"FooBar()"}}, Verdict: model.VerdictUnasked}
+	if got := Forced([]model.Scored{def, h}); got[1].Verdict == model.VerdictInvited {
+		t.Errorf("FooFoo→FooBar treated as a reference update: %q", got[1].Reason)
 	}
 }

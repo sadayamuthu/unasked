@@ -1,0 +1,5 @@
+{
+  "internal/page/page.go:return (total + size - 1) / size": "invited",
+  "internal/store/item.go:ID         int": "unasked",
+  "internal/report/format.go:return fmt.Sprintf(\"%d.%02d\", cents/100, cents%100)": "unasked"
+}

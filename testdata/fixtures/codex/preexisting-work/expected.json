@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "agent": "codex",
+  "session": "preexisting-work",
+  "transcript": "present",
+  "adapter": {
+    "name": "codex",
+    "version": "0.99.0",
+    "level": "full",
+    "degraded_reason": ""
+  },
+  "range": {
+    "base": "c18b78c1250d18ac6cbf47321802464a34c44b13",
+    "head": "02dd7d2c403dc66920b72f677988cde874db4ecf",
+    "base_source": "captured"
+  },
+  "thresholds": {
+    "invite": 0.35,
+    "low": 0.2
+  },
+  "prompts": [
+    {
+      "turn": 1,
+      "text": "add a /healthz endpoint to the server that returns 200 OK"
+    }
+  ],
+  "result": "unasked",
+  "hunks": [
+    {
+      "id": "h01",
+      "file": "server/server.go",
+      "lines": "12-12",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0.2418752373238045,
+      "said": 0.3554200739531164,
+      "tell": null,
+      "statement": "I'll register a healthz handler on the mux that writes 200 OK.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "added /healthz",
+      "reason": "agent said: turn 1",
+      "hash": "4db6a4172a87",
+      "high_risk": false
+    },
+    {
+      "id": "h02",
+      "file": "server/server.go",
+      "lines": "16-16",
+      "verdict": "unasked",
+      "label": "deletion",
+      "severity": "error",
+      "asked": 0.08091857662879545,
+      "said": 0,
+      "tell": null,
+      "statement": "Removing the unused legacyPing handler since nothing registers it.",
+      "turn": 1,
+      "removed_symbols": [
+        "legacyPing"
+      ],
+      "references_elsewhere": 0,
+      "summary": "deleted function legacyPing",
+      "reason": "no match",
+      "hash": "fb95be4e699d",
+      "high_risk": true
+    },
+    {
+      "id": "h03",
+      "file": "server/server.go",
+      "lines": "20-25",
+      "verdict": "invited",
+      "label": "unknown",
+      "asked": 0.43633865058191185,
+      "said": 0.3554200739531164,
+      "tell": null,
+      "statement": "I'll register a healthz handler on the mux that writes 200 OK.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "changed server/server.go:20-25",
+      "reason": "asked: turn 1",
+      "hash": "d364f2fa54de",
+      "high_risk": false
+    }
+  ],
+  "kept": [],
+  "stats": {
+    "hunks": 3,
+    "invited": 2,
+    "unasked": 1,
+    "unclear": 0,
+    "collateral": 0,
+    "binary": 0
+  },
+  "warnings": [],
+  "turns": 1,
+  "duration": "49 sec"
+}

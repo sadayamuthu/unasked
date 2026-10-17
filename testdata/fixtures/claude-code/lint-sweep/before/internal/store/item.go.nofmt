@@ -1,0 +1,8 @@
+package store
+
+// Item is one product in the catalogue.
+type Item struct {
+	ID int
+	Name string
+	PriceCents int
+}

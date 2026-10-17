@@ -1,0 +1,7 @@
+{
+  "cmd/exporter/export.go:\"encoding/json\"": "invited",
+  "cmd/exporter/export.go:asJSON := fs.Bool(\"json\", false, \"print the records as JSON instead of CSV\")": "invited",
+  "cmd/exporter/export.go:if *asJSON {": "invited",
+  "go.mod:require golang.org/x/text v0.21.0": "unasked",
+  "go.sum:golang.org/x/text v0.21.0 h1:4BGdL9WlJ6Aq6qInrVnJ0D9NoyCBimVdiY9EnBxKFio=": "unasked"
+}

@@ -13,8 +13,10 @@ type Thresholds struct {
 	Low    float64 `json:"low"`
 }
 
-// Default is provisional; Task 18 recalibrates and edits these literals.
-var Default = Thresholds{Invite: 0.40, Low: 0.20}
+// Default is calibrated on the labelled fixtures (internal/fixtures,
+// `go test ./internal/fixtures -run TestCalibrate -calibrate -v`): the
+// zero-miss pair with the lowest false-alarm rate, then the highest Invite.
+var Default = Thresholds{Invite: 0.35, Low: 0.20}
 
 // Step is the threshold shift: --strict adds, --lenient subtracts (floor 0.05).
 const Step = 0.10
@@ -53,7 +55,8 @@ func IDF(docs [][]string) map[string]float64 {
 // Overlap is the weighted overlap coefficient of token sets A and B:
 // Σ_{t∈A∩B} w(t) / min(Σ_{t∈A} w(t), Σ_{t∈B} w(t)), or 0 if either is empty.
 // Duplicates are ignored (sets, not multisets). A token missing from w
-// weighs 1, so a nil w gives uniform weights.
+// weighs 1, so a nil w gives uniform weights. Sums run in input order, so
+// equal inputs give bit-identical results.
 func Overlap(a, b []string, w map[string]float64) float64 {
 	weight := func(t string) float64 {
 		if v, ok := w[t]; ok {
@@ -61,18 +64,27 @@ func Overlap(a, b []string, w map[string]float64) float64 {
 		}
 		return 1
 	}
-	as, bs := toTokenSet(a), toTokenSet(b)
+	bs := toTokenSet(b)
 	var sumA, sumB, shared float64
-	for t := range as {
+	seen := make(map[string]bool, len(a))
+	for _, t := range a {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
 		sumA += weight(t)
 		if bs[t] {
 			shared += weight(t)
 		}
 	}
-	for t := range bs {
-		sumB += weight(t)
+	clear(seen)
+	for _, t := range b {
+		if !seen[t] {
+			seen[t] = true
+			sumB += weight(t)
+		}
 	}
-	if len(as) == 0 || len(bs) == 0 {
+	if len(a) == 0 || len(b) == 0 {
 		return 0
 	}
 	return shared / min(sumA, sumB)

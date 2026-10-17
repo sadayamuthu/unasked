@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "agent": "codex",
+  "session": "dependency-bump",
+  "transcript": "present",
+  "adapter": {
+    "name": "codex",
+    "version": "0.99.0",
+    "level": "full",
+    "degraded_reason": ""
+  },
+  "range": {
+    "base": "64475f323670da0a5a54d5d5ab536db0e9f0ecf0",
+    "head": "86f83ae16fc413c9d8292cb402c84c2cd141833a",
+    "base_source": "captured"
+  },
+  "thresholds": {
+    "invite": 0.35,
+    "low": 0.2
+  },
+  "prompts": [
+    {
+      "turn": 1,
+      "text": "add a --json flag to the export command so it prints the records as JSON instead of CSV"
+    }
+  ],
+  "result": "unasked",
+  "hunks": [
+    {
+      "id": "h01",
+      "file": "cmd/exporter/export.go",
+      "lines": "5-5",
+      "verdict": "invited",
+      "label": "collateral",
+      "asked": 0.4244554740064597,
+      "said": 0.5739611531713741,
+      "tell": null,
+      "statement": "I'll add a json flag to the export flag set and encode the records with encoding/json when it is set.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "formatting/import changes in cmd/exporter/export.go",
+      "reason": "asked: turn 1",
+      "hash": "2341645035f2",
+      "high_risk": false
+    },
+    {
+      "id": "h02",
+      "file": "cmd/exporter/export.go",
+      "lines": "12-12",
+      "verdict": "invited",
+      "label": "refactor",
+      "asked": 0.5582660399341693,
+      "said": 0.5739611531713741,
+      "tell": null,
+      "statement": "I'll add a json flag to the export flag set and encode the records with encoding/json when it is set.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "changed body of runExport",
+      "reason": "asked: turn 1",
+      "hash": "923c3bb4227c",
+      "high_risk": false
+    },
+    {
+      "id": "h03",
+      "file": "cmd/exporter/export.go",
+      "lines": "20-22",
+      "verdict": "invited",
+      "label": "refactor",
+      "asked": 0.15878173651595998,
+      "said": 0.5739611531713741,
+      "tell": null,
+      "statement": "I'll add a json flag to the export flag set and encode the records with encoding/json when it is set.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "changed body of runExport",
+      "reason": "agent said: turn 1",
+      "hash": "fb2084f6285c",
+      "high_risk": false
+    },
+    {
+      "id": "h04",
+      "file": "go.mod",
+      "lines": "5-5",
+      "verdict": "unasked",
+      "label": "dependency",
+      "severity": "error",
+      "asked": 0,
+      "said": 0,
+      "tell": "While I'm at it",
+      "statement": "While I'm at it, I'll bump golang.org/x/text to the latest release.",
+      "turn": 1,
+      "references_elsewhere": 0,
+      "summary": "changed dependencies in go.mod",
+      "reason": "no match",
+      "hash": "370005e0c7a1",
+      "high_risk": true
+    },
+    {
+      "id": "h05",
+      "file": "go.sum",
+      "lines": "1-2",
+      "verdict": "unclear",
+      "label": "dependency",
+      "severity": "warning",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "summary": "changed dependencies in go.sum",
+      "reason": "no agent edit found",
+      "hash": "c545c4d60cf3",
+      "high_risk": true
+    }
+  ],
+  "kept": [],
+  "stats": {
+    "hunks": 5,
+    "invited": 3,
+    "unasked": 1,
+    "unclear": 1,
+    "collateral": 0,
+    "binary": 0
+  },
+  "warnings": [],
+  "turns": 1,
+  "duration": "1 min"
+}

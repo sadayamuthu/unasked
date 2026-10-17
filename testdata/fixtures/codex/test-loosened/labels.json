@@ -1,0 +1,4 @@
+{
+  "parser/parser.go:if t := strings.TrimSpace(s); t != \"\" {": "invited",
+  "parser/parser_test.go:if len(got) < 3 {": "unasked"
+}

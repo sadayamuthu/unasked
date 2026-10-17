@@ -1,0 +1,8 @@
+{
+  "internal/users/users.go:// FetchUser loads the user with id from the account service.": "invited",
+  "internal/api/profile.go:u, err := users.FetchUser(r.Context(), r.URL.Query().Get(\"id\"))": "invited",
+  "internal/api/admin.go:target, err := users.FetchUser(ctx, req.TargetID)": "invited",
+  "internal/jobs/digest.go:owner, err := users.FetchUser(ctx, sub.OwnerID)": "invited",
+  "cmd/shopctl/whois.go:u, err := users.FetchUser(context.Background(), args[0])": "invited",
+  "internal/jobs/digest.go:return fmt.Errorf(\"digest for %s: %w\", sub.OwnerID, err)": "unasked"
+}
