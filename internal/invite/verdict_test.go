@@ -31,7 +31,8 @@ func TestVerdictRules(t *testing.T) {
 		{"1 asked unknown, event, said high", model.Scored{Said: 0.9, Event: ev}, false, false, model.VerdictUnclear, "no usable prompt"},
 		{"1 asked unknown, event, high risk", model.Scored{Said: 0.9, Event: ev, HighRisk: true}, false, false, model.VerdictUnasked, "no usable prompt"},
 		{"4 high risk said ignored", model.Scored{Asked: 0.1, Said: 0.9, AskedKnown: true, Event: ev, HighRisk: true}, false, false, model.VerdictUnasked, ""},
-		{"5 high risk weak asked, said ignored", model.Scored{Asked: 0.25, Said: 0.9, AskedKnown: true, Event: ev, HighRisk: true}, false, false, model.VerdictUnclear, "weak match"},
+		{"5 high risk weak asked is unasked (R33, §6.4)", model.Scored{Asked: 0.25, Said: 0.9, AskedKnown: true, Event: ev, HighRisk: true}, false, false, model.VerdictUnasked, "no match"},
+		{"5 high risk asked just below invite is unasked", model.Scored{Asked: 0.39, AskedKnown: true, Event: ev, HighRisk: true}, false, false, model.VerdictUnasked, "no match"},
 		{"4 tell blocks said", model.Scored{Asked: 0.25, Said: 0.9, AskedKnown: true, Event: ev, Tell: "minor"}, false, false, model.VerdictUnclear, ""},
 		{"5 low asked", model.Scored{Asked: 0.2, AskedKnown: true, Event: ev}, false, false, model.VerdictUnclear, ""},
 		{"5 low said", model.Scored{Asked: 0.05, Said: 0.3, AskedKnown: true, Event: ev}, false, false, model.VerdictUnclear, ""},
@@ -174,6 +175,15 @@ func TestForcedHelperDefinition(t *testing.T) {
 	}
 	if got[1].Reason != "required by h01" {
 		t.Errorf("reason %q", got[1].Reason)
+	}
+
+	// Only the invited hunk's added lines count: a symbol it mentions only
+	// in removed lines does not tie a new helper to it (R35).
+	removedOnly := model.Scored{Hunk: model.Hunk{ID: "h01", File: "config.go",
+		Removed: []string{"\tw := parseDuration(v)"}, Added: []string{"\tw := time.Minute"}},
+		Verdict: model.VerdictInvited}
+	if got := Forced([]model.Scored{removedOnly, helper("h02", []string{"parseDuration"}, nil)}); got[1].Verdict == model.VerdictInvited {
+		t.Errorf("helper promoted by a removed-line mention: %q", got[1].Reason)
 	}
 
 	// One hop: a helper called only from a hunk promoted in this pass stays.

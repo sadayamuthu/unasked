@@ -24,7 +24,7 @@
       "text": "fix the parser bug: ParseList drops the last item when the input has no trailing comma"
     }
   ],
-  "result": "unclear",
+  "result": "unasked",
   "hunks": [
     {
       "id": "h01",
@@ -47,9 +47,9 @@
       "id": "h02",
       "file": "parser/parser_test.go",
       "lines": "7-7",
-      "verdict": "unclear",
+      "verdict": "unasked",
       "label": "test",
-      "severity": "warning",
+      "severity": "error",
       "asked": 0.3333333333333333,
       "said": 0.1111111111111111,
       "tell": null,
@@ -57,7 +57,7 @@
       "turn": 1,
       "references_elsewhere": 0,
       "summary": "changed test/CI file parser/parser_test.go",
-      "reason": "weak match",
+      "reason": "no match",
       "hash": "395b4486bf6d",
       "high_risk": true
     }
@@ -66,8 +66,8 @@
   "stats": {
     "hunks": 2,
     "invited": 1,
-    "unasked": 0,
-    "unclear": 1,
+    "unasked": 1,
+    "unclear": 0,
     "collateral": 0,
     "binary": 0
   },

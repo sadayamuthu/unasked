@@ -23,8 +23,8 @@ import (
 //     Only Test 1 can invite a high-risk hunk.
 //  4. Not high-risk, no tell, said ≥ Invite → invited, reason
 //     "agent said: turn N" (N = edit event turn).
-//  5. max(asked, said) ≥ Low → unclear. For a high-risk hunk said is
-//     ignored here too: the agent's words never lift it out of unasked.
+//  5. Not high-risk, max(asked, said) ≥ Low → unclear. A high-risk hunk
+//     Test 1 does not invite is always unasked (§6.4, R33).
 //  6. Otherwise unasked.
 func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscript bool) {
 	set := func(v model.Verdict, reason string, turn int) {
@@ -48,7 +48,7 @@ func decide(s *model.Scored, askedTurn int, th Thresholds, diffOnly, hasTranscri
 		set(model.VerdictInvited, fmt.Sprintf("asked: turn %d", askedTurn), askedTurn)
 	case !s.HighRisk && s.Tell == "" && s.Said >= th.Invite:
 		set(model.VerdictInvited, fmt.Sprintf("agent said: turn %d", eventTurn), eventTurn)
-	case asked >= th.Low || (!s.HighRisk && s.Said >= th.Low):
+	case !s.HighRisk && (asked >= th.Low || s.Said >= th.Low):
 		set(model.VerdictUnclear, "weak match", eventTurn)
 	default:
 		set(model.VerdictUnasked, "no match", eventTurn)

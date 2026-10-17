@@ -55,6 +55,7 @@ jobs:
         env:
           # Recall wins over the 20% false-alarm ceiling (spec §10): TestGates
           # still fails on any miss and prints the measured rate to publish.
+          # Measured 21.4% (3/14); restore the ceiling once Go struct-field symbols land (deferred).
           UNASKED_RELAX_CEILING: "1"
       - name: Build
         run: go build -o unasked-bin ./cmd/unasked
