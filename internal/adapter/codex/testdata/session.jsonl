@@ -1,0 +1,14 @@
+{"timestamp":"2026-10-14T10:00:00.000Z","type":"session_meta","payload":{"id":"sess-1","cwd":"@CWD@","cli_version":"0.99.0","timestamp":"2026-10-14T10:00:00.000Z","git":{"commit_hash":"abc123"}}}
+{"timestamp":"2026-10-14T10:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"<environment_context>\n<cwd>x</cwd>\n</environment_context>"}}
+{"timestamp":"2026-10-14T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"add a retry to the fetcher"}}
+{"timestamp":"2026-10-14T10:00:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ignored duplicate"}]}}
+{"timestamp":"2026-10-14T10:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Let me look first."}]}}
+{"timestamp":"2026-10-14T10:00:05.000Z","type":"response_item","payload":{"type":"function_call","name":"read_file","arguments":"{\"path\":\"a\"}","call_id":"c0"}}
+{"timestamp":"2026-10-14T10:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will add the retry now."}]}}
+{"timestamp":"2026-10-14T10:00:07.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Update File: pkg/fetch.go\n@@\n-old()\n+retry()\n*** End Patch","call_id":"c1"}}
+{"timestamp":"2026-10-14T10:00:08.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Formatting."}]}}
+{"timestamp":"2026-10-14T10:00:09.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"gofmt -w .\"]}","call_id":"c2"}}
+{"timestamp":"2026-10-14T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"[unasked report]\nhunk h01 unasked"}}
+{"timestamp":"2026-10-14T10:00:11.000Z","type":"event_msg","payload":{"type":"user_message","message":"thanks, now run the tests"}}
+{"timestamp":"2026-10-14T10:00:12.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}","call_id":"c3"}}
+{"timestamp":"2026-10-14T10:00:13.000Z","type":"response_item","payload":{"type":"local_shell_call","action":{"type":"exec","command":["npm","install"]},"call_id":"c4"}}
