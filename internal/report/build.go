@@ -5,6 +5,7 @@ package report
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -279,7 +280,7 @@ func (r *Report) sessionLine() string {
 	if r.Duration != "" {
 		parts = append(parts, r.Duration)
 	}
-	id := r.Session
+	id := oneLine(r.Session)
 	if id == "" {
 		id = "(none)"
 	}
@@ -289,7 +290,7 @@ func (r *Report) sessionLine() string {
 func (r *Report) transcriptLine() string {
 	t := r.Transcript
 	if t == "degraded" && r.Adapter.DegradedReason != "" {
-		t += ": " + r.Adapter.DegradedReason
+		t += ": " + oneLine(r.Adapter.DegradedReason)
 	}
 	return fmt.Sprintf("transcript: %s · adapter level: %s", t, r.Adapter.Level)
 }
@@ -299,7 +300,7 @@ func (r *Report) firstPrompt(width int) []string {
 	if len(r.Prompts) == 0 {
 		return nil
 	}
-	words := strings.Fields(r.Prompts[0].Text)
+	words := strings.Fields(clean(r.Prompts[0].Text))
 	var lines []string
 	cur := ""
 	i := 0
@@ -326,9 +327,9 @@ func (r *Report) firstPrompt(width int) []string {
 
 func (h HunkJSON) location() string {
 	if h.FileChange != "" {
-		return h.File // a file-level hunk has no lines
+		return clean(h.File) // a file-level hunk has no lines
 	}
-	return h.File + ":" + h.Lines
+	return clean(h.File) + ":" + h.Lines
 }
 
 func (h HunkJSON) blurb() string {
@@ -342,5 +343,26 @@ func (h HunkJSON) blurb() string {
 	return s
 }
 
-// oneLine collapses all whitespace, including newlines, to single spaces.
-func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+// oneLine strips control characters (see clean) and collapses all
+// whitespace, including newlines, to single spaces.
+func oneLine(s string) string { return strings.Join(strings.Fields(clean(s)), " ") }
+
+// escapeRe matches ANSI CSI and OSC escape sequences.
+var escapeRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?`)
+
+// clean removes ANSI escape sequences and every other control character
+// except newline and tab from text a transcript, a file name or a keep
+// reason supplies, so printing it cannot move the cursor or recolour the
+// terminal (m6).
+func clean(s string) string {
+	s = escapeRe.ReplaceAllString(s, "")
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f {
+			return -1
+		}
+		return r
+	}, s)
+}

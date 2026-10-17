@@ -358,3 +358,46 @@ func TestDropLineSkipsShellMade(t *testing.T) {
 		}
 	}
 }
+
+// m6: text an agent or a prompt supplies (prompt, statement, summary,
+// reason, file name, warnings) is printed without ANSI escapes or other
+// control characters, so a transcript cannot repaint the terminal.
+func TestControlCharactersStripped(t *testing.T) {
+	sel, s, k := fixture()
+	sel.Transcript.Prompts[0].Text = "add \x1b[31mrate\x1b[0m limiting\x07 to the API"
+	sel.Warnings = append(sel.Warnings, "odd\x1b]0;pwned\x07 warning")
+	for i := range s {
+		if s[i].Hunk.ID == "h12" {
+			s[i].Event.Statement = "while here\x1b[2J, standardizing\r the timestamp format"
+			s[i].Summary = "rewrote \x1b[1mtimestamps\x1b[0m"
+			s[i].Hunk.File = "internal/log/mid\x1bdleware.go"
+		}
+	}
+	r := Build(sel, s, k)
+	var txt, md bytes.Buffer
+	if err := WriteText(&txt, r, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMarkdown(&md, r); err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"text": txt.String(), "md": md.String()} {
+		for _, c := range out {
+			if c < 0x20 && c != '\n' || c == 0x7f || c >= 0x80 && c <= 0x9f {
+				t.Errorf("%s output has control character %q:\n%q", name, c, out)
+				break
+			}
+		}
+		for _, want := range []string{"add rate limiting to the API", "rewrote timestamps", "standardizing the timestamp format", "odd warning"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s output lacks %q:\n%s", name, want, out)
+			}
+		}
+	}
+	// With color on, only our own underline escapes remain.
+	txt.Reset()
+	WriteText(&txt, r, false, true)
+	if n := strings.Count(txt.String(), "\x1b"); n != 2 {
+		t.Errorf("color output has %d escapes, want 2 (the tell underline):\n%q", n, txt.String())
+	}
+}

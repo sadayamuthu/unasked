@@ -35,7 +35,7 @@ func hunkLine(h HunkJSON) string {
 func writeHunkText(w io.Writer, h HunkJSON, color bool) {
 	fmt.Fprintln(w, hunkLine(h))
 	if h.Verdict == string(model.VerdictUnclear) && h.Reason != "" && h.Reason != h.Summary {
-		fmt.Fprintf(w, "        %s\n", h.Reason)
+		fmt.Fprintf(w, "        %s\n", oneLine(h.Reason))
 	}
 	if h.Statement != "" {
 		on, off := "_", "_"
@@ -87,7 +87,7 @@ func WriteText(w io.Writer, r *Report, all bool, color bool) error {
 	fmt.Fprintln(bw, r.sessionLine())
 	fmt.Fprintln(bw, r.transcriptLine())
 	for _, wn := range r.Warnings {
-		fmt.Fprintf(bw, "warning: %s\n", wn)
+		fmt.Fprintf(bw, "warning: %s\n", oneLine(wn))
 	}
 	if lines := r.firstPrompt(72); len(lines) > 0 {
 		for i, l := range lines {
@@ -125,7 +125,7 @@ func WriteText(w io.Writer, r *Report, all bool, color bool) error {
 			for _, h := range inv {
 				fmt.Fprintln(bw, strings.TrimRight(fmt.Sprintf("  %s  %s   %s  %s", h.ID, h.location(), h.Label, oneLine(h.Summary)), " "))
 				if h.Reason != "" {
-					fmt.Fprintf(bw, "        why: %s\n", h.Reason)
+					fmt.Fprintf(bw, "        why: %s\n", oneLine(h.Reason))
 				}
 			}
 		}
@@ -137,7 +137,7 @@ func WriteText(w io.Writer, r *Report, all bool, color bool) error {
 	if len(r.Kept) > 0 {
 		fmt.Fprintln(bw, "\nKEPT")
 		for _, k := range r.Kept {
-			fmt.Fprintf(bw, "  %s  %s (by %s)\n", k.Hash, k.Reason, k.By)
+			fmt.Fprintf(bw, "  %s  %s (by %s)\n", k.Hash, oneLine(k.Reason), k.By)
 		}
 	}
 	first := ""

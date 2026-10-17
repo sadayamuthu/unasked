@@ -11,7 +11,7 @@ import (
 func mdHunk(w io.Writer, h HunkJSON) {
 	fmt.Fprintf(w, "- `%s` `%s` **%s** %s\n", h.ID, h.location(), h.Label, h.blurb())
 	if h.Verdict == string(model.VerdictUnclear) && h.Reason != "" && h.Reason != h.Summary {
-		fmt.Fprintf(w, "  - %s\n", h.Reason)
+		fmt.Fprintf(w, "  - %s\n", oneLine(h.Reason))
 	}
 	if h.Statement != "" {
 		var tell string
@@ -28,7 +28,7 @@ func WriteMarkdown(w io.Writer, r *Report) error {
 	fmt.Fprintf(bw, "### unasked: %s\n\n", r.Result)
 	fmt.Fprintf(bw, "%s  \n%s\n", r.sessionLine(), r.transcriptLine())
 	for _, wn := range r.Warnings {
-		fmt.Fprintf(bw, "\n> warning: %s\n", wn)
+		fmt.Fprintf(bw, "\n> warning: %s\n", oneLine(wn))
 	}
 	if lines := r.firstPrompt(72); len(lines) > 0 {
 		fmt.Fprintf(bw, "\n> You asked: \"%s\"\n", joinLines(lines))
@@ -57,7 +57,7 @@ func WriteMarkdown(w io.Writer, r *Report) error {
 	if len(r.Kept) > 0 {
 		fmt.Fprint(bw, "\n#### KEPT\n\n")
 		for _, k := range r.Kept {
-			fmt.Fprintf(bw, "- `%s` %s (by %s)\n", k.Hash, k.Reason, k.By)
+			fmt.Fprintf(bw, "- `%s` %s (by %s)\n", k.Hash, oneLine(k.Reason), k.By)
 		}
 	}
 	if d := droppable(unasked); len(d) > 0 {
