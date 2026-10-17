@@ -1,0 +1,170 @@
+name: unasked report
+description: See which hunks of a pull request nobody asked for. Writes the report to the job summary.
+author: sadayamuthu
+branding:
+  icon: eye
+  color: red
+
+inputs:
+  fail-on:
+    description: 'When to fail the step: unasked (exit 2), unclear (exit 1 or 2) or never.'
+    required: false
+    default: unasked
+  comment:
+    description: 'true to also post the report as a pull-request comment, updated in place on later runs. Needs pull-requests: write.'
+    required: false
+    default: 'false'
+  base:
+    description: Branch to diff from. Defaults to the pull request's base branch, or the repository's default branch.
+    required: false
+    default: ''
+  version:
+    description: unasked release to use, such as 0.1.0 or v0.1.0.
+    required: false
+    default: latest
+  working-directory:
+    description: Directory of the git repository to check.
+    required: false
+    default: .
+  github-token:
+    description: Token used to post the pull-request comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  result:
+    description: 'The result: clean, unclear or unasked.'
+    value: ${{ steps.report.outputs.result }}
+  json:
+    description: Path to the full JSON report.
+    value: ${{ steps.report.outputs.json }}
+  version:
+    description: The unasked release that ran.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install unasked
+      id: install
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::the unasked action runs on Linux and macOS runners, not $RUNNER_OS"; exit 1 ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::unasked has no build for $RUNNER_ARCH runners"; exit 1 ;;
+        esac
+        tag="$VERSION"
+        if [ "$tag" = latest ]; then
+          # The latest-release page redirects to the tag; this avoids the API rate limit.
+          url=$(curl -fsSL --retry 3 -o /dev/null -w '%{url_effective}' https://github.com/sadayamuthu/unasked/releases/latest)
+          tag="${url##*/}"
+        fi
+        case "$tag" in v*) ;; *) tag="v$tag" ;; esac
+        dir="$RUNNER_TEMP/unasked-$tag"
+        mkdir -p "$dir"
+        cd "$dir"
+        archive="unasked_${tag}_${os}_${arch}.tar.gz"
+        base="https://github.com/sadayamuthu/unasked/releases/download/$tag"
+        curl -fsSL --retry 3 -O "$base/$archive" -O "$base/checksums.txt"
+        if ! grep " ${archive}\$" checksums.txt | shasum -a 256 -c - >/dev/null; then
+          echo "::error::checksum mismatch for $archive"
+          exit 1
+        fi
+        tar -xzf "$archive" unasked
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "version=$tag" >> "$GITHUB_OUTPUT"
+        "$dir/unasked" version
+
+    - name: Report
+      id: report
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BASE_INPUT: ${{ inputs.base }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_REF: ${{ github.base_ref }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        set -uo pipefail
+        case "$FAIL_ON" in
+          unasked | unclear | never) ;;
+          *) echo "::error::fail-on must be unasked, unclear or never, not '$FAIL_ON'"; exit 1 ;;
+        esac
+        case "$COMMENT" in
+          true | false) ;;
+          *) echo "::error::comment must be true or false, not '$COMMENT'"; exit 1 ;;
+        esac
+        base="${BASE_INPUT:-${BASE_REF:-${DEFAULT_BRANCH:-main}}}"
+
+        if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+          echo "::notice::Shallow clone; fetching full history for the merge base. Set fetch-depth: 0 on actions/checkout to skip this."
+          git fetch --quiet --no-tags --unshallow origin
+        fi
+        if git rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}" >/dev/null; then
+          ref="origin/$base"
+        elif git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+          ref="$base"
+        elif git fetch --quiet --no-tags origin "+refs/heads/$base:refs/remotes/origin/$base"; then
+          ref="origin/$base"
+        else
+          echo "::error::can't find '$base' locally or on origin"
+          exit 1
+        fi
+
+        # CI has no agent transcript, so this is a diff-only judgement:
+        # deletions, test/CI and dependency hunks are unasked, the rest unclear.
+        json="$RUNNER_TEMP/unasked-report.json"
+        md="$RUNNER_TEMP/unasked-report.md"
+        code=0
+        unasked --since "$ref" --all-sessions --format md > "$md" || code=$?
+        case $code in
+          0) result=clean ;;
+          1) result=unclear ;;
+          2) result=unasked ;;
+          *) exit "$code" ;; # error; unasked already printed it
+        esac
+        unasked --since "$ref" --all-sessions --format json > "$json" || true
+        echo "result=$result" >> "$GITHUB_OUTPUT"
+        echo "json=$json" >> "$GITHUB_OUTPUT"
+
+        cat "$md"
+        {
+          cat "$md"
+          echo
+          echo "_Diff since \`$ref\`. No agent transcript is available in CI, so hunks are judged from the diff alone._"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$COMMENT" = true ]; then
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::notice::comment: true only works on pull_request events; skipped."
+          else
+            marker='<!-- unasked-report -->'
+            body="$marker"$'\n'"$(cat "$md")"
+            id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+              --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | tail -n 1) || id=""
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" >/dev/null \
+                || echo "::warning::could not update the unasked comment"
+            else
+              gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null \
+                || echo "::warning::could not post the unasked comment (needs pull-requests: write)"
+            fi
+          fi
+        fi
+
+        case "$FAIL_ON:$code" in
+          unasked:2 | unclear:1 | unclear:2) exit 1 ;;
+        esac
+        exit 0

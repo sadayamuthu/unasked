@@ -1,0 +1,131 @@
+name: Action
+
+# Exercises action.yml against a small repository with known results, and
+# against this repository's own pull requests. The action installs a released
+# binary, so these jobs are skipped until the first release exists.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: [action.yml, .github/workflows/action-test.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  released:
+    runs-on: ubuntu-latest
+    outputs:
+      found: ${{ steps.check.outputs.found }}
+    steps:
+      - id: check
+        run: |
+          if curl -fsSL -o /dev/null "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/checksums.txt"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No release published yet; skipping the action tests."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  scenario:
+    needs: released
+    if: needs.released.outputs.found == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build a repo with a deletion branch, a feature branch and a no-op branch
+        run: |
+          set -eu
+          r="$RUNNER_TEMP/scenario"
+          git init -q -b main "$r"
+          cd "$r"
+          git config user.name ci
+          git config user.email ci@example.com
+          printf 'package shop\n\nfunc Price() int { return 1 }\n\nfunc Legacy() int { return 2 }\n' > shop.go
+          git add . && git commit -qm base
+          git checkout -qb deletion
+          printf 'package shop\n\nfunc Price() int { return 1 }\n' > shop.go
+          git commit -qam "delete Legacy"
+          git checkout -q main && git checkout -qb feature
+          printf '\nfunc Discount() int { return 3 }\n' >> shop.go
+          git commit -qam "add Discount"
+          git checkout -q main && git checkout -qb noop
+          git checkout -q deletion
+
+      - name: Deletion is unasked
+        id: deletion
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/scenario
+          base: main
+          fail-on: never
+      - name: Expect unasked
+        run: |
+          test "${{ steps.deletion.outputs.result }}" = unasked
+          grep -q '"label": "deletion"' "${{ steps.deletion.outputs.json }}"
+          grep -q '"high_risk": true' "${{ steps.deletion.outputs.json }}"
+
+      - name: fail-on unasked fails the step
+        id: failing
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/scenario
+          base: main
+      - name: Expect failure
+        run: test "${{ steps.failing.outcome }}" = failure
+
+      - name: Switch to the feature branch
+        run: git -C "$RUNNER_TEMP/scenario" checkout -q feature
+      - name: Without a transcript a feature is unclear, pinned version
+        id: feature
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/scenario
+          base: main
+          version: ${{ steps.deletion.outputs.version }}
+      - name: Expect unclear, passing under fail-on unasked
+        run: |
+          test "${{ steps.feature.outputs.result }}" = unclear
+          test "${{ steps.feature.outputs.version }}" = "${{ steps.deletion.outputs.version }}"
+      - name: fail-on unclear fails the step
+        id: strict
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/scenario
+          base: main
+          fail-on: unclear
+      - name: Expect failure
+        run: test "${{ steps.strict.outcome }}" = failure
+
+      - name: Switch to the no-op branch
+        run: git -C "$RUNNER_TEMP/scenario" checkout -q noop
+      - name: No changes is clean
+        id: clean
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/scenario
+          base: main
+          fail-on: unclear
+      - name: Expect clean
+        run: test "${{ steps.clean.outputs.result }}" = clean
+
+  self:
+    # Default inputs on a real pull request: changes since the base branch.
+    # Report only: diff-only mode flags every test and CI change.
+    needs: released
+    if: github.event_name == 'pull_request' && needs.released.outputs.found == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./
+        with:
+          fail-on: never

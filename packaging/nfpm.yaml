@@ -1,0 +1,35 @@
+# .deb and .rpm packages, built by the release workflow with nfpm
+# (https://nfpm.goreleaser.com). VERSION and ARCH come from the environment.
+name: unasked
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: devel
+priority: optional
+maintainer: ksadayamuthu <ksadayamuthu@outlook.com>
+description: |
+  See what your coding agent changed that you never asked for. Reads your
+  prompts and the agent's transcript, scores every hunk of the diff, lists
+  the ones nobody asked for, and can revert exactly those, with undo.
+  Claude Code and Codex. Local, deterministic, no network.
+vendor: sadayamuthu
+homepage: https://github.com/sadayamuthu/unasked
+license: MIT
+contents:
+  - src: dist/unasked
+    dst: /usr/bin/unasked
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/doc/unasked/LICENSE
+  - src: README.md
+    dst: /usr/share/doc/unasked/README.md
+  - src: USAGE.md
+    dst: /usr/share/doc/unasked/USAGE.md
+overrides:
+  deb:
+    depends:
+      - git (>= 1:2.30)
+  rpm:
+    depends:
+      - git >= 2.30

@@ -58,7 +58,26 @@ jobs:
           # Measured 21.4% (3/14); restore the ceiling once Go struct-field symbols land (deferred).
           UNASKED_RELAX_CEILING: "1"
       - name: Build
-        run: go build -o unasked-bin ./cmd/unasked
+        shell: bash
+        run: go build -ldflags "-X main.version=${GITHUB_SHA::7}" -o "unasked${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/unasked
+      - name: Smoke test
+        shell: bash
+        run: ./unasked version
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # -short skips the timing-based performance tests, which the race
+      # detector slows past their budget. The race detector needs cgo.
+      - name: Test with race detector
+        run: go test -race -short ./...
+        env:
+          CGO_ENABLED: '1'
+          UNASKED_RELAX_CEILING: "1"
 
   cross-build:
     runs-on: ubuntu-latest

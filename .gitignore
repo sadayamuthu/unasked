@@ -1,4 +1,6 @@
-docs/
-.superpowers/
 /unasked
 /unasked.exe
+/dist/
+/demo/unasked
+docs/
+.superpowers/
