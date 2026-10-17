@@ -1,0 +1,2 @@
+{"type":"user","cwd":"@CWD@","version":"2.1.289","timestamp":"2026-10-14T10:00:30.000Z","message":{"role":"user","content":"subagent task prompt"}}
+{"type":"assistant","cwd":"@CWD@","version":"2.1.289","timestamp":"2026-10-14T10:00:31.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Fixing the helper."},{"type":"tool_use","id":"s1","name":"Edit","input":{"file_path":"@CWD@/helper.go","old_string":"a","new_string":"b"}}]}}
