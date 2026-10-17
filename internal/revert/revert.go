@@ -49,8 +49,10 @@ var applyArgs = []string{"-c", "core.autocrlf=false", "apply", "--unidiff-zero",
 // Prepare selects and checks the hunks to drop (§9.1). current is the fresh
 // re-diff; hashes are the requested content hashes when explicit. Without
 // explicit ids it takes every unasked hunk (never unclear) from last, or from
-// current when last is nil. Hashes in last.Kept and hunks whose reason starts
-// with "kept" count as kept.
+// current when last is nil, except hunks a shell command or the developer
+// made (invite.ShellReason, R39), which are dropped only by naming them.
+// Hashes in last.Kept and hunks whose reason starts with "kept" count as
+// kept.
 func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes []string, explicit bool) (*Plan, error) {
 	byHash := map[string][]model.Scored{}
 	present := make([]string, 0, len(current))
@@ -78,7 +80,7 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 		return nil, ErrNothingScored
 	case last != nil:
 		for _, h := range last.Hunks {
-			if h.Verdict != string(model.VerdictUnasked) || kept[h.Hash] {
+			if h.Verdict != string(model.VerdictUnasked) || kept[h.Hash] || h.Reason == invite.ShellReason {
 				continue
 			}
 			ss := byHash[h.Hash]
@@ -89,7 +91,7 @@ func Prepare(r *gitx.Repo, last *report.Report, current []model.Scored, hashes [
 		}
 	default:
 		for _, s := range current {
-			if s.Verdict == model.VerdictUnasked && !kept[s.Hunk.Hash] && !strings.HasPrefix(s.Reason, "kept") {
+			if s.Verdict == model.VerdictUnasked && !kept[s.Hunk.Hash] && !strings.HasPrefix(s.Reason, "kept") && s.Reason != invite.ShellReason {
 				want[s.Hunk.Hash] = true
 			}
 		}

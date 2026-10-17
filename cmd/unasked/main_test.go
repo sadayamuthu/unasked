@@ -563,25 +563,49 @@ func (c *cli) withFiles(files map[string]string) {
 	c.g.Write("fetch.go", fetch)
 }
 
+// addBash appends a Bash tool call to the session transcript setup wrote.
+func (c *cli) addBash(command string) {
+	c.t.Helper()
+	id := strings.NewReplacer("/", "-", " ", "-").Replace(c.t.Name())
+	p := filepath.Join(os.Getenv("UNASKED_HOME"), ".claude", "projects", id, id+".jsonl")
+	cwd, _ := json.Marshal(c.g.Dir)
+	cmd, _ := json.Marshal(command)
+	line := fmt.Sprintf(`{"type":"assistant","cwd":%s,"version":"2.1.289","timestamp":%q,"message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":%s}}]}}`+"\n", cwd, time.Now().UTC().Format(time.RFC3339), cmd)
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(line); err != nil {
+		c.t.Fatal(err)
+	}
+}
+
 // TestFileLevelChangesReported is the C3 probe: a renamed-away test and a
-// deleted empty file have no content lines, and used to report clean.
+// deleted empty file have no content lines, and used to report clean. Made
+// by the agent's shell commands, they are unasked (R39, R41).
 func TestFileLevelChangesReported(t *testing.T) {
 	c := setup(t, true)
 	c.withFiles(map[string]string{"parser_test.go": "package main\n\nfunc TestParse(t *testing.T) {}\n", ".keep": ""})
 	c.g.Git("mv", "parser_test.go", "parser_test.go.disabled")
 	c.g.Git("rm", "-q", ".keep")
 	r := jsonReport(t, c.want(1, "--format", "json"))
+	if r.Result != report.ResultUnclear {
+		t.Fatalf("without a shell command in the transcript: result %s", r.Result)
+	}
+	c.addBash("git mv parser_test.go parser_test.go.disabled && git rm -q .keep")
+	r = jsonReport(t, c.want(2, "--format", "json"))
 	got := map[string]report.HunkJSON{}
 	for _, h := range r.Hunks {
 		got[h.File] = h
 	}
-	if h := got["parser_test.go.disabled"]; h.FileChange != "rename" || h.OldFile != "parser_test.go" || h.Label != "test" || h.Verdict != "unclear" || !h.HighRisk {
+	if h := got["parser_test.go.disabled"]; h.FileChange != "rename" || h.OldFile != "parser_test.go" || h.Label != "test" || h.Verdict != "unasked" || !h.HighRisk {
 		t.Errorf("rename hunk %+v", h)
 	}
-	if h := got[".keep"]; h.FileChange != "delete" || h.Label != "deletion" || h.Verdict != "unclear" {
+	if h := got[".keep"]; h.FileChange != "delete" || h.Label != "deletion" || h.Verdict != "unasked" || h.Reason != invite.ShellReason {
 		t.Errorf("delete hunk %+v", h)
 	}
-	text := c.want(1)
+	text := c.want(2)
 	if !strings.Contains(text, "renamed parser_test.go to parser_test.go.disabled") {
 		t.Errorf("text report:\n%s", text)
 	}

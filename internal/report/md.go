@@ -60,8 +60,8 @@ func WriteMarkdown(w io.Writer, r *Report) error {
 			fmt.Fprintf(bw, "- `%s` %s (by %s)\n", k.Hash, k.Reason, k.By)
 		}
 	}
-	if len(unasked) > 0 {
-		fmt.Fprintf(bw, "\n```\nunasked --drop %s\n```\n", idList(unasked))
+	if d := droppable(unasked); len(d) > 0 {
+		fmt.Fprintf(bw, "\n```\nunasked --drop %s\n```\n", idList(d))
 	}
 	return bw.Flush()
 }

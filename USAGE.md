@@ -198,10 +198,21 @@ unasked --keep h01       accept it on this branch
   per line, in `tells.txt` under your config directory
   (`~/.config/unasked/` on Linux, `~/Library/Application Support/unasked/`
   on macOS, `%AppData%\unasked\` on Windows).
-- An unclear hunk also shows why: `weak match`, `no agent edit found` (you,
-  or another tool, made that edit during the session), `no usable prompt`, or
-  for a deletion, test or dependency change one of your prompts names,
+- An unclear hunk also shows why: `weak match`, `no agent edit found` (no
+  edit tool call of the agent made it and the session ran no shell command,
+  so you or another tool did), `no usable prompt`, or for a deletion, test
+  or dependency change one of your prompts names,
   `you may have asked for this (turn N) — confirm with unasked --keep`.
+- When the session did run shell commands, a hunk no edit tool call explains
+  is judged on your prompts alone and, unless they ask for it, is unasked
+  with the reason `made by a shell command or by you (no edit tool call)`.
+  Such a hunk is never reverted by `--drop` without ids, never left in the
+  suggested `--drop` command and never fed back to the agent on its own;
+  name it to drop it.
+- A rename, a mode change, or an empty file added or deleted has no lines;
+  it is listed as a file-level hunk (`file_change` in JSON): a rename or an
+  empty file deleted is a `deletion` (`test` on a test path), a mode change
+  a `refactor`, an empty file added a `feature`. `--drop` reverses it.
 
 **How a hunk is judged.** Test 1 compares the hunk with your prompts; Test 2
 compares what the agent said before the edit with your prompts. A hunk is
@@ -295,10 +306,15 @@ Key fields:
   **`tell`** is the tell phrase found in `statement`, or `null`.
 - **`hunks[].reason`**: why it got its verdict, for example `asked: turn 1`,
   `agent said: turn 2`, `required by h03`, `collateral`, `weak match`,
-  `no match`, `asked: generic overlap only`, `no agent edit found` or
+  `no match`, `asked: generic overlap only`, `no agent edit found`,
+  `made by a shell command or by you (no edit tool call)` or
   `no usable prompt`.
+- **`hunks[].file_change`** and **`old_file`**: set on a file-level hunk:
+  `rename` (from `old_file`), `mode`, `add` or `delete` (an empty file).
+  Its `lines` is `0-0`.
 - **`hunks[].hash`**: the hunk's identity: the first 12 hex digits of
-  SHA-256 over its path, removed lines and added lines. Ids like `h01` are
+  SHA-256 over its path, removed lines and added lines (for a file-level
+  hunk, over its kind, paths and modes). Ids like `h01` are
   per-run display labels; `--drop` and `--keep` check hashes.
 - **`range.base_source`**: where the diff's base came from: `captured`
   (session start), `reflog` (the last commit before the session), `head`,

@@ -608,3 +608,25 @@ func (s *session) codexTranscript() {
 	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"While I'm here, I removed green from the colors list."}]}}`, ts))
 	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":%s,"call_id":"c2"}}`, ts, colorsPatch))
 }
+
+// TestRunStopShellMadeDoesNotBlock (R39): a hunk only a shell command (or
+// the developer) explains is listed as unasked but never fed back on its
+// own.
+func TestRunStopShellMadeDoesNotBlock(t *testing.T) {
+	s := started(t)
+	s.askedEdit()
+	s.g.Write("colors.txt", "red\nblue\n")
+	cwd, _ := json.Marshal(s.g.Dir)
+	s.add(fmt.Sprintf(`{"type":"assistant","cwd":%s,"version":"2.1.289","timestamp":%q,"message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"sed -i '' /green/d colors.txt"}}]}}`, cwd, stamp()))
+	code, out, errs := s.run("claude-code", s.payload("Stop", false))
+	if code != 0 || out != "" || errs != "" {
+		t.Fatalf("exit %d stdout %q stderr %q log %s", code, out, errs, s.hookLog())
+	}
+	var rep report.Report
+	if err := json.Unmarshal(readFile(t, filepath.Join(s.captureDir(), "report.json")), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Result != report.ResultUnasked {
+		t.Errorf("result %q: the shell-made deletion must still be listed", rep.Result)
+	}
+}

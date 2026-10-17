@@ -99,16 +99,16 @@
       "id": "h05",
       "file": "go.sum",
       "lines": "1-2",
-      "verdict": "unclear",
+      "verdict": "unasked",
       "label": "dependency",
-      "severity": "warning",
+      "severity": "error",
       "asked": 0,
       "said": 0,
       "tell": null,
       "turn": 0,
       "references_elsewhere": 0,
       "summary": "changed dependencies in go.sum",
-      "reason": "no agent edit found",
+      "reason": "made by a shell command or by you (no edit tool call)",
       "hash": "c545c4d60cf3",
       "high_risk": true
     }
@@ -117,8 +117,8 @@
   "stats": {
     "hunks": 5,
     "invited": 3,
-    "unasked": 1,
-    "unclear": 1,
+    "unasked": 2,
+    "unclear": 0,
     "collateral": 0,
     "binary": 0
   },

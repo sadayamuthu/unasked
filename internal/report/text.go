@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/sadayamuthu/unasked/internal/invite"
 	"github.com/sadayamuthu/unasked/internal/model"
 )
 
@@ -47,6 +48,19 @@ func writeHunkText(w io.Writer, h HunkJSON, color bool) {
 		}
 		fmt.Fprintf(w, "        agent said: \"%s\"\n", markTell(oneLine(h.Statement), tell, on, off))
 	}
+}
+
+// droppable leaves out hunks a shell command or the developer made
+// (invite.ShellReason): the suggested drop command must never revert work
+// no agent edit explains.
+func droppable(hs []HunkJSON) []HunkJSON {
+	var out []HunkJSON
+	for _, h := range hs {
+		if h.Reason != invite.ShellReason {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func idList(hs []HunkJSON) string {
@@ -135,8 +149,8 @@ func WriteText(w io.Writer, r *Report, all bool, color bool) error {
 	}
 	if first != "" {
 		fmt.Fprintln(bw)
-		if len(unasked) > 0 {
-			fmt.Fprintf(bw, "unasked --drop %s   revert the unasked hunks\n", idList(unasked))
+		if d := droppable(unasked); len(d) > 0 {
+			fmt.Fprintf(bw, "unasked --drop %s   revert the unasked hunks\n", idList(d))
 		}
 		fmt.Fprintf(bw, "unasked --keep %s       accept it on this branch\n", first)
 	}

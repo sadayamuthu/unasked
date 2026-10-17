@@ -40,7 +40,7 @@ func TestVerdictRules(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := c.s
-		decide(&s, s.Asked, 3, ruleTh, c.diffOnly, !c.noTranscript)
+		decide(&s, s.Asked, 3, ruleTh, c.diffOnly, !c.noTranscript, false)
 		if s.Verdict != c.want {
 			t.Errorf("%s: verdict = %s (%q), want %s", c.name, s.Verdict, s.Reason, c.want)
 		}
@@ -217,5 +217,44 @@ func TestReplaceWordAdjacentMatches(t *testing.T) {
 	h := model.Scored{Hunk: model.Hunk{ID: "h02", Removed: []string{"FooFoo()"}, Added: []string{"FooBar()"}}, Verdict: model.VerdictUnasked}
 	if got := Forced([]model.Scored{def, h}); got[1].Verdict == model.VerdictInvited {
 		t.Errorf("FooFoo→FooBar treated as a reference update: %q", got[1].Reason)
+	}
+}
+
+// TestShellMadeHunks (R39): a hunk no edit tool call explains, in a
+// transcript that ran shell commands, is judged on Test 1 alone. High-risk
+// or unmatched it is unasked with the shell reason; without any shell
+// command in the transcript it stays unclear ("no agent edit found").
+func TestShellMadeHunks(t *testing.T) {
+	prompt := []model.Prompt{{Turn: 1, Text: "add a json flag to the export command so it prints records as json"}}
+	gosum := model.Hunk{ID: "h01", File: "go.sum", Removed: []string{"golang.org/x/text v0.14.0 h1:abc="}, Added: []string{"golang.org/x/text v0.21.0 h1:def="}}
+	lint := model.Hunk{ID: "h02", File: "internal/store/item.go", Removed: []string{"\tID int"}, Added: []string{"\tID   int"}}
+	asked := model.Hunk{ID: "h03", File: "cmd/export.go", Added: []string{"\tasJSON := fs.Bool(\"json\", false, \"print the records as json\")"}}
+	classify := func(h model.Hunk) (model.Label, bool) {
+		if h.File == "go.sum" {
+			return model.LabelDependency, true
+		}
+		return model.LabelRefactor, false
+	}
+	run := func(edits []model.EditEvent) map[string]model.Scored {
+		out := map[string]model.Scored{}
+		for _, s := range Score(Input{Hunks: []model.Hunk{gosum, lint, asked}, Transcript: &model.Transcript{Prompts: prompt, Edits: edits}, Classify: classify, Th: Default}) {
+			out[s.Hunk.ID] = s
+		}
+		return out
+	}
+	shell := run([]model.EditEvent{{Turn: 1, Command: "go get golang.org/x/text@latest"}})
+	for _, id := range []string{"h01", "h02"} {
+		if s := shell[id]; s.Verdict != model.VerdictUnasked || s.Reason != ShellReason || s.Said != 0 {
+			t.Errorf("%s with shell: %s %q said %v", id, s.Verdict, s.Reason, s.Said)
+		}
+	}
+	if s := shell["h03"]; s.Verdict != model.VerdictInvited {
+		t.Errorf("asked hunk with shell: %s %q (Test 1 still invites)", s.Verdict, s.Reason)
+	}
+	none := run([]model.EditEvent{{Turn: 1, File: "other.go", After: "x"}})
+	for _, id := range []string{"h01", "h02", "h03"} {
+		if s := none[id]; s.Verdict != model.VerdictUnclear || s.Reason != "no agent edit found" {
+			t.Errorf("%s without shell: %s %q", id, s.Verdict, s.Reason)
+		}
 	}
 }

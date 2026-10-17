@@ -15,6 +15,7 @@ import (
 	"github.com/sadayamuthu/unasked/internal/gittest"
 	"github.com/sadayamuthu/unasked/internal/gitx"
 	"github.com/sadayamuthu/unasked/internal/hunk"
+	"github.com/sadayamuthu/unasked/internal/invite"
 	"github.com/sadayamuthu/unasked/internal/model"
 	"github.com/sadayamuthu/unasked/internal/report"
 )
@@ -1273,5 +1274,34 @@ func TestDropEmptyFileAddAndDelete(t *testing.T) {
 				t.Fatal("undo not byte-exact")
 			}
 		})
+	}
+}
+
+// A drop without ids never takes a hunk made by a shell command or the
+// developer (R39), from the last report or from the current scoring; it can
+// still be dropped by naming it.
+func TestDropNoIDsSkipsShellMade(t *testing.T) {
+	f := fourHunks(t)
+	cur := f.scored(nil)
+	for i := range cur {
+		if cur[i].Hunk.File == "a.txt" {
+			cur[i].Reason = invite.ShellReason
+		}
+	}
+	last := &report.Report{Transcript: "present"}
+	for _, s := range cur {
+		last.Hunks = append(last.Hunks, report.HunkJSON{ID: s.Hunk.ID, Hash: s.Hunk.Hash, Verdict: string(s.Verdict), Reason: s.Reason})
+	}
+	for _, l := range []*report.Report{nil, last} {
+		p, err := Prepare(f.r, l, cur, nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Hunks) != 2 || p.Hunks[0].File != "b.txt" || p.Hunks[1].File != "b.txt" {
+			t.Fatalf("last=%v: selected %+v", l != nil, p.Hunks)
+		}
+	}
+	if p, err := Prepare(f.r, last, cur, hashesOf(cur, byFile("a.txt")), true); err != nil || len(p.Hunks) != 2 {
+		t.Fatalf("named shell hunks: %v %+v", err, p)
 	}
 }

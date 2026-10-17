@@ -24,7 +24,7 @@
       "text": "Fix the off-by-one in Pages in internal/page/page.go: when total is an exact multiple of size the page count is one too high."
     }
   ],
-  "result": "unclear",
+  "result": "unasked",
   "hunks": [
     {
       "id": "h01",
@@ -47,7 +47,7 @@
       "id": "h02",
       "file": "internal/report/format.go",
       "lines": "7-7",
-      "verdict": "unclear",
+      "verdict": "unasked",
       "label": "collateral",
       "severity": "warning",
       "asked": 0.05108445984219003,
@@ -56,7 +56,7 @@
       "turn": 0,
       "references_elsewhere": 0,
       "summary": "formatting/import changes in internal/report/format.go",
-      "reason": "no agent edit found",
+      "reason": "made by a shell command or by you (no edit tool call)",
       "hash": "ed620a8f2f0f",
       "high_risk": false
     },
@@ -64,7 +64,7 @@
       "id": "h03",
       "file": "internal/store/item.go",
       "lines": "5-6",
-      "verdict": "unclear",
+      "verdict": "unasked",
       "label": "collateral",
       "severity": "warning",
       "asked": 0.06697220023182478,
@@ -73,7 +73,7 @@
       "turn": 0,
       "references_elsewhere": 0,
       "summary": "formatting/import changes in internal/store/item.go",
-      "reason": "no agent edit found",
+      "reason": "made by a shell command or by you (no edit tool call)",
       "hash": "5897815f6d96",
       "high_risk": false
     }
@@ -82,8 +82,8 @@
   "stats": {
     "hunks": 3,
     "invited": 1,
-    "unasked": 0,
-    "unclear": 2,
+    "unasked": 2,
+    "unclear": 0,
     "collateral": 0,
     "binary": 0
   },

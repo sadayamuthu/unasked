@@ -233,12 +233,12 @@ func TestHighRiskNeverInvited(t *testing.T) {
 func TestGenericOverlapReasonOnlyWhenCapDecides(t *testing.T) {
 	ev := &model.EditEvent{Turn: 7, File: "a.go"}
 	s := model.Scored{Asked: 0.30, AskedKnown: true, Event: ev, HighRisk: true}
-	decide(&s, 0.30, 3, ruleTh, false, true)
+	decide(&s, 0.30, 3, ruleTh, false, true, false)
 	if s.Verdict != model.VerdictUnasked || s.Reason != "no match" {
 		t.Errorf("below invite: %s %q", s.Verdict, s.Reason)
 	}
 	s = model.Scored{Asked: 0.90, AskedKnown: true, Event: ev, HighRisk: true}
-	decide(&s, ruleTh.Invite-0.01, 3, ruleTh, false, true)
+	decide(&s, ruleTh.Invite-0.01, 3, ruleTh, false, true, false)
 	if s.Verdict != model.VerdictUnasked || s.Reason != "asked: generic overlap only" || s.Asked != 0.90 {
 		t.Errorf("capped: %s %q asked %.2f", s.Verdict, s.Reason, s.Asked)
 	}

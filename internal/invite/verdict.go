@@ -9,6 +9,12 @@ import (
 	"github.com/sadayamuthu/unasked/internal/model"
 )
 
+// ShellReason is the reason of a hunk no edit tool call explains in a
+// transcript that ran shell commands (R39): a shell command or the developer
+// made it. Such a hunk is never dropped by a drop without ids and never
+// triggers hook feedback on its own.
+const ShellReason = "made by a shell command or by you (no edit tool call)"
+
 // decide sets s.Verdict, s.Reason and s.Turn from the scores already on s.
 // asked is the Test 1 score for the verdict: s.Asked, or less when the
 // evidence cap (R36) held a high-risk hunk below Invite. askedTurn is the
@@ -19,8 +25,11 @@ import (
 //  1. DiffOnly, or Test 1 unknown (!AskedKnown), whether or not an event
 //     aligned: high-risk → unasked, else unclear; reason "no usable prompt"
 //     (§6.4 "No usable prompt").
-//  2. No aligned event but a transcript is present → unclear, reason
-//     "no agent edit found" (Test 2 can never invite it).
+//  2. No aligned event but a transcript is present: without any shell
+//     command in it → unclear, reason "no agent edit found". With one
+//     (hasShell, R39) the hunk is judged by the rules below on Test 1
+//     alone (said is 0); if it ends unclear on a weak match or unasked, its
+//     reason is ShellReason.
 //  3. asked ≥ Invite → invited, reason "asked: turn N" (N = prompt turn),
 //     unless the hunk is high-risk: a high-risk hunk is never invited by
 //     scoring (R36g). Since the evidence cap holds asked below Invite for a
@@ -34,7 +43,7 @@ import (
 //     Test 1 does not invite is always unasked (§6.4, R33).
 //  6. Otherwise unasked; reason "asked: generic overlap only" when the raw
 //     s.Asked reached Invite and only the evidence cap kept it out.
-func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOnly, hasTranscript bool) {
+func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOnly, hasTranscript, hasShell bool) {
 	set := func(v model.Verdict, reason string, turn int) {
 		s.Verdict, s.Reason, s.Turn = v, reason, turn
 	}
@@ -49,7 +58,7 @@ func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOn
 		} else {
 			set(model.VerdictUnclear, "no usable prompt", 0)
 		}
-	case s.Event == nil && hasTranscript:
+	case s.Event == nil && hasTranscript && !hasShell:
 		set(model.VerdictUnclear, "no agent edit found", 0)
 	case asked >= th.Invite && s.HighRisk:
 		set(model.VerdictUnclear, fmt.Sprintf(maybeAskedReason, askedTurn), askedTurn)
@@ -63,6 +72,10 @@ func decide(s *model.Scored, asked float64, askedTurn int, th Thresholds, diffOn
 		set(model.VerdictUnasked, genericReason, eventTurn)
 	default:
 		set(model.VerdictUnasked, "no match", eventTurn)
+	}
+	if s.Event == nil && hasTranscript && hasShell && !diffOnly && s.AskedKnown &&
+		(s.Verdict == model.VerdictUnasked || s.Reason == "weak match") {
+		s.Reason = ShellReason
 	}
 }
 

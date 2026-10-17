@@ -15,6 +15,7 @@ import (
 	"github.com/sadayamuthu/unasked/internal/adapter"
 	"github.com/sadayamuthu/unasked/internal/gittest"
 	"github.com/sadayamuthu/unasked/internal/gitx"
+	"github.com/sadayamuthu/unasked/internal/invite"
 	"github.com/sadayamuthu/unasked/internal/keep"
 	"github.com/sadayamuthu/unasked/internal/model"
 )
@@ -330,6 +331,30 @@ func TestSessionLineTurns(t *testing.T) {
 		r := &Report{Agent: "claude-code", Session: "s", Turns: c.turns, Duration: "1 min"}
 		if got := r.sessionLine(); !strings.Contains(got, c.want) {
 			t.Errorf("Turns=%d: %q, want %q", c.turns, got, c.want)
+		}
+	}
+}
+
+// The suggested drop command names only hunks an agent edit made: a hunk a
+// shell command or the developer made (R39) is listed but left out of it.
+func TestDropLineSkipsShellMade(t *testing.T) {
+	sel, s, k := fixture()
+	sh := sc("h14", "go.sum", 1, 2, model.VerdictUnasked, model.LabelDependency, model.SeverityError)
+	sh.Reason = invite.ShellReason
+	r := Build(sel, append(s, sh), k)
+	var txt, md bytes.Buffer
+	if err := WriteText(&txt, r, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMarkdown(&md, r); err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"text": txt.String(), "md": md.String()} {
+		if !strings.Contains(out, "go.sum") || !strings.Contains(out, "unasked --drop h12 h13\n") && !strings.Contains(out, "unasked --drop h12 h13 ") {
+			t.Errorf("%s:\n%s", name, out)
+		}
+		if strings.Contains(out, "--drop h12 h13 h14") {
+			t.Errorf("%s suggests dropping the shell-made hunk:\n%s", name, out)
 		}
 	}
 }

@@ -146,6 +146,10 @@ func Score(in Input) []model.Scored {
 		}
 		edits = in.Transcript.Edits
 	}
+	hasShell := false
+	for _, e := range edits {
+		hasShell = hasShell || e.Command != ""
+	}
 
 	hunkToks := make([][]string, len(in.Hunks))
 	docs := make([][]string, 0, len(in.Hunks)+len(prompts))
@@ -197,7 +201,7 @@ func Score(in Input) []model.Scored {
 			}
 			s.Tell = in.Tells.Match(s.Event.Statement)
 		}
-		decide(&s, asked, askedTurn, in.Th, in.DiffOnly, hasTranscript)
+		decide(&s, asked, askedTurn, in.Th, in.DiffOnly, hasTranscript, hasShell)
 		out[i] = s
 	}
 	return out
