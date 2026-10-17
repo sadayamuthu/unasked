@@ -1,0 +1,40 @@
+### unasked: unasked
+
+Session 8f2c1d (claude-code, 41 turns, 22 min)  
+transcript: present · adapter level: full
+
+> warning: pre-existing changes may be included
+
+> You asked: "Add rate limiting to the public API: 60/min anon, 600/min keyed, 429 + Retry-After, limits configurable via env."
+
+11 hunks changed · 8 invited · 2 unasked · 1 unclear
+
+#### UNASKED
+
+- `h12` `internal/log/middleware.go:41-58` **refactor** rewrote timestamp formatting in the logging middleware
+  - agent said: "_while here_, standardizing the timestamp format"
+- `h13` `internal/http/headers.go:12-19` **deletion** ⚠ deleted a response header still set in 3 handlers
+  - agent said: "removing the deprecated X-Request-Id header"
+
+<details>
+<summary>UNCLEAR (1)</summary>
+
+- `h09` `internal/config/env.go:70-88` **feature** added helper parseDuration
+  - used by invited hunk h07
+
+</details>
+
+<details>
+<summary>COLLATERAL (not counted)</summary>
+
+3 hunks in 2 files
+
+</details>
+
+#### KEPT
+
+- `999999999999` harmless (by user)
+
+```
+unasked --drop h12 h13
+```

@@ -8,7 +8,10 @@ import (
 )
 
 // Thresholds are the verdict cut-offs applied to the asked and said scores.
-type Thresholds struct{ Invite, Low float64 }
+type Thresholds struct {
+	Invite float64 `json:"invite"`
+	Low    float64 `json:"low"`
+}
 
 // Default is provisional; Task 18 recalibrates and edits these literals.
 var Default = Thresholds{Invite: 0.40, Low: 0.20}

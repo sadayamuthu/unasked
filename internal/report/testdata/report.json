@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "agent": "claude-code",
+  "session": "8f2c1d",
+  "transcript": "present",
+  "adapter": {
+    "name": "claude-code",
+    "version": "2.1.0",
+    "level": "full",
+    "degraded_reason": ""
+  },
+  "range": {
+    "base": "9f3c1ad",
+    "head": "worktree",
+    "base_source": "captured"
+  },
+  "thresholds": {
+    "invite": 0.4,
+    "low": 0.2
+  },
+  "prompts": [
+    {
+      "turn": 0,
+      "text": "Add rate limiting to the public API: 60/min anon, 600/min keyed, 429 + Retry-After, limits configurable via env."
+    }
+  ],
+  "result": "unasked",
+  "hunks": [
+    {
+      "id": "h01",
+      "file": "internal/rate/limiter.go",
+      "lines": "10-14",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "asked: rate limiting",
+      "hash": "971eaed090b4",
+      "high_risk": false
+    },
+    {
+      "id": "h02",
+      "file": "internal/rate/limiter_test.go",
+      "lines": "11-15",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "b63efa0e272c",
+      "high_risk": false
+    },
+    {
+      "id": "h03",
+      "file": "internal/http/server.go",
+      "lines": "12-16",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "258cb853b395",
+      "high_risk": false
+    },
+    {
+      "id": "h04",
+      "file": "internal/config/env.go",
+      "lines": "13-17",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "71e8911d2fe7",
+      "high_risk": false
+    },
+    {
+      "id": "h05",
+      "file": "internal/http/respond.go",
+      "lines": "14-18",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "0b24362d1316",
+      "high_risk": false
+    },
+    {
+      "id": "h06",
+      "file": "cmd/api/main.go",
+      "lines": "15-19",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "472a9159071d",
+      "high_risk": false
+    },
+    {
+      "id": "h07",
+      "file": "README.md",
+      "lines": "16-20",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "7a15ed62fe22",
+      "high_risk": false
+    },
+    {
+      "id": "h08",
+      "file": "internal/rate/keys.go",
+      "lines": "17-21",
+      "verdict": "invited",
+      "label": "feature",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "matches your request",
+      "hash": "2c60d4aff231",
+      "high_risk": false
+    },
+    {
+      "id": "h12",
+      "file": "internal/log/middleware.go",
+      "lines": "41-58",
+      "verdict": "unasked",
+      "label": "refactor",
+      "severity": "warning",
+      "asked": 0,
+      "said": 0,
+      "tell": "while here",
+      "statement": "while here, standardizing the timestamp format",
+      "turn": 22,
+      "references_elsewhere": 0,
+      "summary": "rewrote timestamp formatting in the logging middleware",
+      "hash": "b5529fbc65bf",
+      "high_risk": false
+    },
+    {
+      "id": "h13",
+      "file": "internal/http/headers.go",
+      "lines": "12-19",
+      "verdict": "unasked",
+      "label": "deletion",
+      "severity": "error",
+      "asked": 0,
+      "said": 0.04,
+      "tell": null,
+      "statement": "removing the deprecated X-Request-Id header",
+      "turn": 23,
+      "removed_symbols": [
+        "X-Request-Id"
+      ],
+      "references_elsewhere": 3,
+      "summary": "deleted a response header still set in 3 handlers",
+      "hash": "f6fbcc7773c3",
+      "high_risk": true
+    },
+    {
+      "id": "h09",
+      "file": "internal/config/env.go",
+      "lines": "70-88",
+      "verdict": "unclear",
+      "label": "feature",
+      "severity": "warning",
+      "asked": 0.09,
+      "said": 0.31,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "summary": "added helper parseDuration",
+      "reason": "used by invited hunk h07",
+      "hash": "38564bf2d2cd",
+      "high_risk": false
+    },
+    {
+      "id": "h20",
+      "file": "a.go",
+      "lines": "1-1",
+      "verdict": "invited",
+      "label": "collateral",
+      "severity": "info",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "collateral",
+      "hash": "ead4c1531b9e",
+      "high_risk": false
+    },
+    {
+      "id": "h21",
+      "file": "b.go",
+      "lines": "1-1",
+      "verdict": "invited",
+      "label": "collateral",
+      "severity": "info",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "collateral",
+      "hash": "915d4066a7df",
+      "high_risk": false
+    },
+    {
+      "id": "h22",
+      "file": "b.go",
+      "lines": "1-1",
+      "verdict": "invited",
+      "label": "collateral",
+      "severity": "info",
+      "asked": 0,
+      "said": 0,
+      "tell": null,
+      "turn": 0,
+      "references_elsewhere": 0,
+      "reason": "collateral",
+      "hash": "c139eab28cbc",
+      "high_risk": false
+    }
+  ],
+  "kept": [
+    {
+      "id": "",
+      "hash": "999999999999",
+      "reason": "harmless",
+      "by": "user"
+    }
+  ],
+  "stats": {
+    "hunks": 11,
+    "invited": 8,
+    "unasked": 2,
+    "unclear": 1,
+    "collateral": 3,
+    "binary": 1
+  },
+  "warnings": [
+    "pre-existing changes may be included"
+  ],
+  "turns": 41,
+  "duration": "22 min"
+}

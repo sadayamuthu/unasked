@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sadayamuthu/unasked/schema/v1.json",
+  "title": "unasked report v1",
+  "type": "object",
+  "required": ["version", "agent", "session", "transcript", "adapter", "range", "thresholds", "prompts", "result", "hunks", "kept", "stats", "warnings"],
+  "properties": {
+    "version": {"type": "integer", "enum": [1]},
+    "agent": {"type": "string"},
+    "session": {"type": "string"},
+    "transcript": {"type": "string", "enum": ["present", "none", "degraded"]},
+    "adapter": {
+      "type": "object",
+      "required": ["name", "version", "level", "degraded_reason"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "level": {"type": "string", "enum": ["diff-only", "prompts-only", "partial", "report-only", "full"]},
+        "degraded_reason": {"type": "string"}
+      }
+    },
+    "range": {
+      "type": "object",
+      "required": ["base", "head", "base_source"],
+      "properties": {
+        "base": {"type": "string"},
+        "head": {"type": "string"},
+        "base_source": {"type": "string"}
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "required": ["invite", "low"],
+      "properties": {"invite": {"type": "number"}, "low": {"type": "number"}}
+    },
+    "prompts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["turn", "text"],
+        "properties": {"turn": {"type": "integer"}, "text": {"type": "string"}}
+      }
+    },
+    "result": {"type": "string", "enum": ["clean", "unclear", "unasked"]},
+    "hunks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "file", "lines", "verdict", "label", "asked", "said", "tell", "turn", "references_elsewhere", "hash", "high_risk"],
+        "properties": {
+          "id": {"type": "string"},
+          "file": {"type": "string"},
+          "lines": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["invited", "unclear", "unasked"]},
+          "label": {"type": "string", "enum": ["deletion", "test", "dependency", "feature", "refactor", "collateral", "unknown"]},
+          "severity": {"type": "string", "enum": ["error", "warning", "info"]},
+          "asked": {"type": "number"},
+          "said": {"type": "number"},
+          "tell": {"type": ["string", "null"]},
+          "statement": {"type": "string"},
+          "turn": {"type": "integer"},
+          "removed_symbols": {"type": "array", "items": {"type": "string"}},
+          "references_elsewhere": {"type": "integer"},
+          "summary": {"type": "string"},
+          "reason": {"type": "string"},
+          "hash": {"type": "string"},
+          "high_risk": {"type": "boolean"}
+        }
+      }
+    },
+    "kept": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "hash", "reason", "by"],
+        "properties": {
+          "id": {"type": "string"},
+          "hash": {"type": "string"},
+          "reason": {"type": "string"},
+          "by": {"type": "string", "enum": ["user", "agent"]}
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["hunks", "invited", "unasked", "unclear", "collateral", "binary"],
+      "properties": {
+        "hunks": {"type": "integer"},
+        "invited": {"type": "integer"},
+        "unasked": {"type": "integer"},
+        "unclear": {"type": "integer"},
+        "collateral": {"type": "integer"},
+        "binary": {"type": "integer"}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "turns": {"type": "integer"},
+    "duration": {"type": "string"}
+  }
+}

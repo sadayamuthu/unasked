@@ -54,8 +54,8 @@ type Hunk struct {
 }
 
 type Prompt struct {
-	Turn int
-	Text string
+	Turn int    `json:"turn"`
+	Text string `json:"text"`
 }
 
 type EditEvent struct {

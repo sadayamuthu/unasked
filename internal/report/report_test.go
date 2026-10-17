@@ -1,0 +1,293 @@
+package report
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sadayamuthu/unasked/internal/adapter"
+	"github.com/sadayamuthu/unasked/internal/gittest"
+	"github.com/sadayamuthu/unasked/internal/gitx"
+	"github.com/sadayamuthu/unasked/internal/keep"
+	"github.com/sadayamuthu/unasked/internal/model"
+)
+
+var update = flag.Bool("update", false, "rewrite golden files")
+
+func sc(id, file string, start, n int, v model.Verdict, l model.Label, sev model.Severity) model.Scored {
+	return model.Scored{
+		Hunk:    model.Hunk{ID: id, File: file, NewStart: start, NewLines: n, Hash: hashOf(id)},
+		Verdict: v, Label: l, Severity: sev, HighRisk: l.HighRisk(),
+	}
+}
+
+func hashOf(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func fixture() (*adapter.Selection, []model.Scored, []keep.Entry) {
+	t0 := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	sel := &adapter.Selection{
+		Sessions: []adapter.Session{{Agent: "claude-code", ID: "8f2c1d", Start: t0, End: t0.Add(22 * time.Minute)}},
+		Transcript: &model.Transcript{
+			Prompts: []model.Prompt{{Turn: 0, Text: "Add rate limiting to the public API: 60/min anon, 600/min keyed, 429 + Retry-After, limits configurable via env."}},
+			Version: "2.1.0", Start: t0, End: t0.Add(22 * time.Minute), Turns: 41,
+		},
+		Caps:       adapter.Capabilities{Level: adapter.Full},
+		FromTree:   "9f3c1ad",
+		ToTree:     "worktree",
+		BaseSource: "captured",
+		Warnings:   []string{"pre-existing changes may be included"},
+		Binary:     1,
+	}
+	var s []model.Scored
+	for i, f := range []string{"internal/rate/limiter.go", "internal/rate/limiter_test.go", "internal/http/server.go", "internal/config/env.go",
+		"internal/http/respond.go", "cmd/api/main.go", "README.md", "internal/rate/keys.go"} {
+		h := sc("h0"+string(rune('1'+i)), f, 10+i, 5, model.VerdictInvited, model.LabelFeature, model.SeverityNone)
+		h.Reason = "matches your request"
+		if i == 0 {
+			h.Reason = "asked: rate limiting"
+		}
+		s = append(s, h)
+	}
+	u1 := sc("h12", "internal/log/middleware.go", 41, 18, model.VerdictUnasked, model.LabelRefactor, model.SeverityWarning)
+	u1.Summary = "rewrote timestamp formatting in the logging middleware"
+	u1.Event = &model.EditEvent{Statement: "while here, standardizing the timestamp format"}
+	u1.Tell = "while here"
+	u1.Turn = 22
+	u2 := sc("h13", "internal/http/headers.go", 12, 8, model.VerdictUnasked, model.LabelDeletion, model.SeverityError)
+	u2.Summary = "deleted a response header still set in 3 handlers"
+	u2.Event = &model.EditEvent{Statement: "removing the deprecated X-Request-Id header"}
+	u2.Turn = 23
+	u2.RemovedSymbols = []string{"X-Request-Id"}
+	u2.XRefs = 3
+	u2.Said = 0.04
+	c := sc("h09", "internal/config/env.go", 70, 19, model.VerdictUnclear, model.LabelFeature, model.SeverityWarning)
+	c.Summary = "added helper parseDuration"
+	c.Reason = "used by invited hunk h07"
+	c.Asked, c.Said = 0.09, 0.31
+	s = append(s, u1, u2, c)
+	for i, f := range []string{"a.go", "b.go", "b.go"} {
+		h := sc("h2"+string(rune('0'+i)), f, 1, 1, model.VerdictInvited, model.LabelCollateral, model.SeverityInfo)
+		h.Reason = "collateral"
+		s = append(s, h)
+	}
+	k := []keep.Entry{{Hash: "999999999999", Branch: "main", Reason: "harmless", By: keep.ByUser}}
+	return sel, s, k
+}
+
+func TestResultAndExitCode(t *testing.T) {
+	mk := func(vs ...model.Verdict) []model.Scored {
+		var s []model.Scored
+		for _, v := range vs {
+			s = append(s, sc("h01", "a.go", 1, 1, v, model.LabelFeature, model.SeverityNone))
+		}
+		return s
+	}
+	coll := sc("h02", "a.go", 5, 1, model.VerdictInvited, model.LabelCollateral, model.SeverityInfo)
+	coll.Reason = "collateral"
+	for _, tc := range []struct {
+		name   string
+		scored []model.Scored
+		level  adapter.Level
+		result string
+		code   int
+	}{
+		{"none", nil, adapter.Full, "clean", 0},
+		{"diffonly zero hunks", nil, adapter.DiffOnly, "clean", 0},
+		{"invited", mk(model.VerdictInvited), adapter.Full, "clean", 0},
+		{"collateral only", []model.Scored{coll}, adapter.Full, "clean", 0},
+		{"unclear", mk(model.VerdictInvited, model.VerdictUnclear), adapter.Full, "unclear", 1},
+		{"unasked", mk(model.VerdictUnclear, model.VerdictUnasked), adapter.Full, "unasked", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sel := &adapter.Selection{Transcript: &model.Transcript{}, Caps: adapter.Capabilities{Level: tc.level}}
+			r := Build(sel, tc.scored, nil)
+			if r.Result != tc.result || r.ExitCode() != tc.code {
+				t.Fatalf("got %s/%d want %s/%d", r.Result, r.ExitCode(), tc.result, tc.code)
+			}
+		})
+	}
+}
+
+func TestAgentKeepMakesUnclearNotClean(t *testing.T) {
+	sel := &adapter.Selection{Transcript: &model.Transcript{}}
+	inv := sc("h01", "a.go", 1, 1, model.VerdictInvited, model.LabelFeature, model.SeverityNone)
+	inv.Reason = "kept by agent: fine"
+	un := sc("h02", "b.go", 1, 1, model.VerdictUnclear, model.LabelFeature, model.SeverityWarning)
+	un.Reason = "kept by agent: ok"
+	for _, h := range []model.Scored{inv, un} {
+		r := Build(sel, []model.Scored{h}, []keep.Entry{{Hash: h.Hunk.Hash, Reason: "x", By: keep.ByAgent}})
+		if r.Result != "unclear" || r.ExitCode() != 1 {
+			t.Fatalf("%s: got %s/%d", h.Hunk.ID, r.Result, r.ExitCode())
+		}
+		if r.Stats.Unclear != 1 {
+			t.Fatalf("stats %+v", r.Stats)
+		}
+	}
+}
+
+func TestBuildFields(t *testing.T) {
+	sel, s, k := fixture()
+	r := Build(sel, s, k)
+	if r.Agent != "claude-code" || r.Session != "8f2c1d" || r.Transcript != "present" || r.Duration != "22 min" || r.Turns != 41 {
+		t.Fatalf("%+v", r)
+	}
+	if r.Stats != (Stats{Hunks: 11, Invited: 8, Unasked: 2, Unclear: 1, Collateral: 3, Binary: 1}) {
+		t.Fatalf("stats %+v", r.Stats)
+	}
+	if r.Adapter.Level != "full" || r.Range.BaseSource != "captured" || r.Range.Base != "9f3c1ad" {
+		t.Fatalf("%+v %+v", r.Adapter, r.Range)
+	}
+	sel.Sessions = nil
+	if r := Build(sel, nil, nil); r.Transcript != "none" || r.Agent != "" {
+		t.Fatalf("%+v", r)
+	}
+	sel.Sessions = []adapter.Session{{Agent: "x"}}
+	sel.Caps.Degraded = "unknown format"
+	if r := Build(sel, nil, nil); r.Transcript != "degraded" || r.Adapter.DegradedReason != "unknown format" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func golden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	p := filepath.Join("testdata", name)
+	if *update {
+		if err := os.WriteFile(p, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(want, got) {
+		t.Fatalf("%s differs (run with -update):\n%s", name, got)
+	}
+}
+
+func TestGoldenText(t *testing.T) {
+	sel, s, k := fixture()
+	r := Build(sel, s, k)
+	var b bytes.Buffer
+	if err := WriteText(&b, r, false, false); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "report.txt", b.Bytes())
+	b.Reset()
+	WriteText(&b, r, true, false)
+	golden(t, "report_all.txt", b.Bytes())
+	b.Reset()
+	WriteText(&b, r, false, true)
+	golden(t, "report_color.txt", b.Bytes())
+	if !strings.Contains(b.String(), "\x1b[4mwhile here\x1b[24m") {
+		t.Fatal("tell not underlined")
+	}
+}
+
+func TestGoldenMarkdown(t *testing.T) {
+	sel, s, k := fixture()
+	var b bytes.Buffer
+	if err := WriteMarkdown(&b, Build(sel, s, k)); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "report.md", b.Bytes())
+}
+
+func TestGoldenJSON(t *testing.T) {
+	sel, s, k := fixture()
+	var b bytes.Buffer
+	if err := WriteJSON(&b, Build(sel, s, k)); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "report.json", b.Bytes())
+}
+
+func TestJSONMatchesSchema(t *testing.T) {
+	schema, err := os.ReadFile("../../schema/v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sch map[string]any
+	if err := json.Unmarshal(schema, &sch); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, data []byte) {
+		var doc any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if errs := validate(sch, doc, "$"); len(errs) > 0 {
+			t.Fatalf("%s: %v", name, errs)
+		}
+	}
+	golden, _ := os.ReadFile("testdata/report.json")
+	check("golden", golden)
+	var b bytes.Buffer
+	WriteJSON(&b, Build(&adapter.Selection{Transcript: &model.Transcript{}}, nil, nil))
+	check("empty", b.Bytes())
+	// the validator really rejects
+	if errs := validate(sch, map[string]any{"version": 2.0}, "$"); len(errs) == 0 {
+		t.Fatal("validator accepted a bad document")
+	}
+}
+
+func TestResolveIDsAndHashes(t *testing.T) {
+	sel, s, k := fixture()
+	r := Build(sel, s, k)
+	got, err := r.Resolve([]string{"h12", "0123456789ab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != r.Hunks[8].Hash || got[1] != "0123456789ab" {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestResolveUnknownID(t *testing.T) {
+	sel, s, k := fixture()
+	_, err := Build(sel, s, k).Resolve([]string{"h99"})
+	if err == nil || !strings.Contains(err.Error(), "h99") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := Build(sel, s, k).Resolve([]string{"zzz"}); err == nil {
+		t.Fatal("want error")
+	}
+}
+
+func TestSaveLoadLast(t *testing.T) {
+	repo := gittest.New(t)
+	g, err := gitx.Open(repo.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLast(g); err == nil {
+		t.Fatal("want error before save")
+	}
+	sel, s, k := fixture()
+	r := Build(sel, s, k)
+	if err := SaveLast(g, r); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(g.GitDir, "unasked", "last.json")
+	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 && os.PathSeparator == '/' {
+		t.Fatalf("%v %v", fi, err)
+	}
+	back, err := LoadLast(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := back.Resolve([]string{"h13"})
+	if err != nil || h[0] != r.Hunks[9].Hash {
+		t.Fatalf("%v %v", h, err)
+	}
+}
