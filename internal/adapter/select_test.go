@@ -340,3 +340,39 @@ func TestFindSessionFromSubdir(t *testing.T) {
 		t.Fatalf("sel = %+v", sel)
 	}
 }
+
+func TestAllSessionsWidestCapturedRange(t *testing.T) {
+	g, r := setup(t)
+	now := time.Now()
+	// Session 1 edits a.txt; session 2 starts after that, so its own
+	// baseline already contains the change.
+	if _, err := adapter.RecordStart(r, "claude-code", "s1", g.Dir); err != nil {
+		t.Fatal(err)
+	}
+	g.Write("a.txt", "from session one\n")
+	capture(t, r, "s1", session(g.Dir, now.Add(-2*time.Hour), ev{"p1", "a.txt"}))
+	time.Sleep(10 * time.Millisecond)
+	if _, err := adapter.RecordStart(r, "claude-code", "s2", g.Dir); err != nil {
+		t.Fatal(err)
+	}
+	g.Write("b.txt", "from session two\n")
+	capture(t, r, "s2", session(g.Dir, now.Add(-time.Hour), ev{"p2", "b.txt"}))
+
+	one, err := adapter.Select(r, adapter.Request{}, claude())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasHunkFor(one, "a.txt") {
+		t.Fatalf("newest-only range should not contain a.txt: %+v", one.Hunks)
+	}
+	all, err := adapter.Select(r, adapter.Request{AllSessions: true}, claude())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Sessions) != 2 || all.BaseSource != "captured" || len(all.Warnings) != 0 {
+		t.Fatalf("sel = %+v", all)
+	}
+	if !hasHunkFor(all, "a.txt") || !hasHunkFor(all, "b.txt") {
+		t.Fatalf("hunks = %+v", all.Hunks)
+	}
+}

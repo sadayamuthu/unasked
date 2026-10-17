@@ -180,6 +180,22 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 		sel.Transcript, sel.Caps = first.tr, first.caps
 	} else {
 		sel.Transcript, sel.Caps = union(hits)
+		if fixedFrom == "" {
+			// Widest range: the oldest baseline, so an earlier session's
+			// changes are not hidden by a later session's start baseline.
+			w, err := widest(r, hits)
+			if err != nil {
+				return nil, err
+			}
+			sel.FromTree, sel.BaseSource = w.from, w.src
+			if sel.Hunks, sel.Binary, err = diff(w.from); err != nil {
+				return nil, err
+			}
+			sel.Warnings = nil
+			if w.warn {
+				sel.Warnings = append(sel.Warnings, warnPreexisting)
+			}
+		}
 		for i := len(hits) - 1; i >= 0; i-- {
 			sel.Sessions = append(sel.Sessions, hits[i].s)
 		}
@@ -276,6 +292,37 @@ func rangeFor(r *gitx.Repo, c *candidate) error {
 	}
 	c.from, c.src = tree, "head"
 	return nil
+}
+
+// widest picks the range covering every unioned session: the earliest
+// captured Start when all have one, else the commit fallback before the
+// earliest transcript start (with the usual warning).
+func widest(r *gitx.Repo, hits []*candidate) (*candidate, error) {
+	var oldest *candidate
+	allCaptured := true
+	var earliest time.Time
+	for _, c := range hits {
+		if c.s.Meta == nil || c.s.Meta.Start.Tree == "" {
+			allCaptured = false
+		} else if oldest == nil || c.s.Meta.Start.Taken.Before(oldest.s.Meta.Start.Taken) {
+			oldest = c
+		}
+		st := c.tr.Start
+		if st.IsZero() {
+			st = c.s.Start
+		}
+		if !st.IsZero() && (earliest.IsZero() || st.Before(earliest)) {
+			earliest = st
+		}
+	}
+	if allCaptured {
+		return &candidate{from: oldest.s.Meta.Start.Tree, src: "captured"}, nil
+	}
+	w := &candidate{tr: &model.Transcript{Start: earliest}}
+	if err := rangeFor(r, w); err != nil {
+		return nil, err
+	}
+	return w, nil
 }
 
 // intersects reports whether any edit touches a file in the diff.
