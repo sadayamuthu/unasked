@@ -170,6 +170,10 @@ func LoadMeta(dir string) (*Meta, error) {
 	return &m, nil
 }
 
+// SaveMeta writes dir/meta.json atomically, mode 0600. Callers doing a
+// read-modify-write (the hook's feedback counter) serialise it themselves.
+func SaveMeta(dir string, m *Meta) error { return writeMeta(dir, m) }
+
 func writeMeta(dir string, m *Meta) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

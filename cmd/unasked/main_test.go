@@ -450,3 +450,70 @@ func TestErrorsExit3(t *testing.T) {
 		t.Errorf("unmerged: exit %d %q", code, errs)
 	}
 }
+
+func TestHookCLI(t *testing.T) {
+	c := setup(t, false)
+	home := t.TempDir()
+	old := hookHome
+	hookHome = func() string { return home }
+	t.Cleanup(func() { hookHome = old })
+	path := filepath.Join(home, ".claude", "settings.json")
+
+	if out := c.want(0, "hook", "install", "--agent", "claude-code"); out != "installed claude-code hook in "+path+"\n" {
+		t.Errorf("install: %q", out)
+	}
+	if out := c.want(0, "hook", "install", "--agent", "claude-code"); out != "already installed claude-code hook in "+path+"\n" {
+		t.Errorf("reinstall: %q", out)
+	}
+	if out := c.want(0, "hook", "status"); !strings.Contains(out, "claude-code  installed  "+path) || !strings.Contains(out, "codex  not installed") {
+		t.Errorf("status:\n%s", out)
+	}
+	if out := c.want(0, "doctor"); !regexp.MustCompile(`(?m)^claude-code .* user `).MatchString(out) {
+		t.Errorf("doctor hook column:\n%s", out)
+	}
+	out := c.want(0, "hook", "install", "--agent", "codex", "--project")
+	codexPath := filepath.Join(c.g.Dir, ".codex", "hooks.json")
+	if !strings.Contains(out, "installed codex hook in "+codexPath) || !strings.Contains(out, "Codex: open /hooks in Codex once to trust the unasked hook.") {
+		t.Errorf("codex install: %q", out)
+	}
+	if out := c.want(0, "doctor"); !regexp.MustCompile(`(?m)^codex .* project `).MatchString(out) {
+		t.Errorf("doctor project hook:\n%s", out)
+	}
+	if out := c.want(0, "hook", "uninstall", "--agent", "claude-code"); out != "removed claude-code hook from "+path+"\n" {
+		t.Errorf("uninstall: %q", out)
+	}
+	if out := c.want(0, "hook", "uninstall", "--agent", "claude-code"); out != "no claude-code hook in "+path+"\n" {
+		t.Errorf("second uninstall: %q", out)
+	}
+	if _, _, errs := c.run("hook", "install", "--agent", "nope"); !strings.Contains(errs, "unknown agent") {
+		t.Errorf("unknown agent: %q", errs)
+	}
+	if code, _, errs := c.run("hook", "install", "--global", "--project"); code != 3 || errs == "" {
+		t.Errorf("both scopes: exit %d %q", code, errs)
+	}
+}
+
+func TestHookInstallDetected(t *testing.T) {
+	setup(t, false) // creates $UNASKED_HOME/.claude/projects, so claude-code is detected
+	home := os.Getenv("UNASKED_HOME")
+	t.Cleanup(func() {
+		os.RemoveAll(filepath.Join(home, ".claude", "settings.json"))
+		os.RemoveAll(filepath.Join(home, ".codex", "hooks.json"))
+	})
+	c := &cli{t: t, g: gittest.New(t), env: map[string]string{}, tty: true}
+	out := c.want(0, "hook", "install")
+	if !strings.Contains(out, "installed claude-code hook in "+filepath.Join(home, ".claude", "settings.json")) {
+		t.Errorf("install all:\n%s", out)
+	}
+}
+
+func TestHookRunCLINeverFails(t *testing.T) {
+	c := setup(t, false)
+	for _, args := range [][]string{{"hook", "run"}, {"hook", "run", "--agent", "claude-code"}, {"hook", "run", "--agent", "zzz"}} {
+		var o, e bytes.Buffer
+		code := run(context.Background(), args, c.g.Dir, strings.NewReader("garbage"), &o, &e)
+		if code != 0 || o.Len() != 0 {
+			t.Errorf("%v: exit %d stdout %q", args, code, o.String())
+		}
+	}
+}

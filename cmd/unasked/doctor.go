@@ -19,10 +19,6 @@ import (
 	"github.com/sadayamuthu/unasked/internal/report"
 )
 
-// hookStatus reports whether unasked's hook is installed for an agent.
-// Hook installers arrive with `unasked hook`; until then it is unknown.
-func hookStatus(name string) string { return "-" }
-
 // runDoctor prints one row per registered adapter. Outside a repository the
 // capture columns are empty.
 func runDoctor(args []string, dir string, stdout io.Writer) (int, error) {
@@ -30,7 +26,9 @@ func runDoctor(args []string, dir string, stdout io.Writer) (int, error) {
 		return 0, fmt.Errorf("doctor: unexpected %q", args[0])
 	}
 	var captured []adapter.Session
+	repo := ""
 	if r, err := gitx.Open(dir); err == nil {
+		repo = r.Dir
 		if captured, err = adapter.ListCaptured(r); err != nil {
 			return 0, err
 		}
@@ -53,7 +51,7 @@ func runDoctor(args []string, dir string, stdout io.Writer) (int, error) {
 			last = s.Meta.Updated.Local().Format("2006-01-02 15:04")
 			break
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name(), detected, ver, a.MaxLevel(), hookStatus(a.Name()), last)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name(), detected, ver, a.MaxLevel(), hookStatus(a.Name(), repo), last)
 	}
 	if err := tw.Flush(); err != nil {
 		return 0, err

@@ -1,0 +1,37 @@
+{
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(go test:*)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo pre && check <x>",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "notify-send done"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "FOO": "1",
+    "BIG": 12345678901234567890
+  }
+}

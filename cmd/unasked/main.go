@@ -25,7 +25,8 @@ const usage = `usage: unasked [flags]                 report on the latest agent
        unasked --patch [ids…]          print the reverse patch instead
        unasked --keep <id> [--reason "…"]
        unasked undo [--list] [--force] [snapshot]
-       unasked hook install|uninstall|status [--agent name] [--project]
+       unasked hook install|uninstall [--agent name] [--global|--project]
+       unasked hook status [--agent name]
        unasked doctor | stats [--since 30d] | version
 flags: --since <ref>  --staged  --session <id>  --agent <name>  --all-sessions
        --all  --format text|md|json  --strict  --lenient  --no-color
@@ -72,7 +73,7 @@ func run(ctx context.Context, args []string, dir string, stdin io.Reader, stdout
 	case "stats":
 		code, err = runStats(args[1:], dir, stdout)
 	case "hook":
-		err = errors.New("hook: not available in this build")
+		code, err = runHook(args[1:], dir, stdin, stdout, stderr)
 	default:
 		code, err = runMain(args, dir, stdin, stdout)
 	}

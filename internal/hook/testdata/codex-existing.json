@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/check.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
