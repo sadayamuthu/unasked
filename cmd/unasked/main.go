@@ -40,12 +40,23 @@ var (
 )
 
 func main() {
-	dir, err := os.Getwd()
+	dir, err := startDir(os.Args[1:], os.Getwd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "unasked:", err)
 		os.Exit(model.ExitError)
 	}
 	os.Exit(run(context.Background(), os.Args[1:], dir, os.Stdin, os.Stdout, os.Stderr))
+}
+
+// startDir is the working directory. `hook run` must never fail its agent,
+// so for it an unreadable cwd (deleted directory) is "", not an error: the
+// hook payload carries its own cwd.
+func startDir(args []string, getwd func() (string, error)) (string, error) {
+	dir, err := getwd()
+	if err != nil && len(args) >= 2 && args[0] == "hook" && args[1] == "run" {
+		return "", nil
+	}
+	return dir, err
 }
 
 func run(ctx context.Context, args []string, dir string, stdin io.Reader, stdout, stderr io.Writer) (code int) {

@@ -8,7 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sadayamuthu/unasked/internal/adapter"
@@ -110,7 +113,9 @@ func (c *call) handle(stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 			return 0, err
 		}
 		// A new prompt is a new task: the feedback cap applies per task (R31).
-		if m.Feedbacks != 0 {
+		// Our own report delivered back as a prompt (a Stop-block
+		// continuation) is not a new task, or the cap could never trigger.
+		if m.Feedbacks != 0 && !strings.HasPrefix(strings.TrimSpace(p.Prompt), feedbackMarker) {
 			m.Feedbacks = 0
 			return 0, adapter.SaveMeta(dir, m)
 		}
@@ -138,6 +143,11 @@ func (c *call) stop(s Spec, p Payload, dir string, stdout, stderr io.Writer) (in
 	feedback, saveMeta := false, false
 	switch {
 	case rep.Result == report.ResultUnasked && !p.StopHookActive && m.Feedbacks < maxFeedbacks:
+		// Build the text first: a report that cannot be rendered must not
+		// use up one of the session's feedbacks.
+		if _, err := FeedbackText(rep); err != nil {
+			return 0, err
+		}
 		m.Feedbacks++
 		feedback, saveMeta = true, true
 	case rep.Result == report.ResultUnasked && !p.StopHookActive:
@@ -172,14 +182,16 @@ func (c *call) stop(s Spec, p Payload, dir string, stdout, stderr io.Writer) (in
 	return code, errors.Join(errs...)
 }
 
-// lock takes dir's hook lock (O_EXCL), waiting up to lockWait. A lock older
-// than lockStale is left from a crashed hook and is taken over.
+// lock takes dir's hook lock (O_EXCL, holding our PID), waiting up to
+// lockWait. A lock whose PID is not running, or one older than lockStale, is
+// left from a crashed hook and is taken over.
 func lock(dir string) (func(), error) {
 	p := filepath.Join(dir, lockName)
 	deadline := time.Now().Add(lockWait)
 	for {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
+			fmt.Fprintf(f, "%d\n", os.Getpid())
 			f.Close()
 			return func() { os.Remove(p) }, nil
 		}
@@ -190,11 +202,31 @@ func lock(dir string) (func(), error) {
 			os.Remove(p)
 			continue
 		}
+		if b, err := os.ReadFile(p); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 && !running(pid) {
+				os.Remove(p)
+				continue
+			}
+		}
 		if time.Now().After(deadline) {
 			return nil, errLockBusy
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// running reports whether pid is a live process. On Windows it is not
+// checked (always true), leaving the lockStale rule.
+func running(pid int) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // log appends err to <git-dir>/unasked/hook.log. Without a repository from

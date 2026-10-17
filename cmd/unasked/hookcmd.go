@@ -145,7 +145,7 @@ func hookInstall(o *hookOptions, dir string, stdout io.Writer) (int, error) {
 		} else {
 			fmt.Fprintf(stdout, "already installed %s hook in %s\n", s.Agent, path)
 		}
-		if s.TrustNote != "" {
+		if changed && s.TrustNote != "" {
 			fmt.Fprintln(stdout, s.TrustNote)
 		}
 	}

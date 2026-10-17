@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +110,15 @@ func (s *session) payload(event string, active bool) string {
 	b, _ := json.Marshal(map[string]any{
 		"session_id": "s1", "transcript_path": s.transcript, "cwd": s.g.Dir,
 		"hook_event_name": event, "stop_hook_active": active, "permission_mode": "default",
+	})
+	return string(b)
+}
+
+// promptPayload is a UserPromptSubmit payload carrying prompt.
+func (s *session) promptPayload(prompt string) string {
+	b, _ := json.Marshal(map[string]any{
+		"session_id": "s1", "transcript_path": s.transcript, "cwd": s.g.Dir,
+		"hook_event_name": "UserPromptSubmit", "prompt": prompt, "permission_mode": "default",
 	})
 	return string(b)
 }
@@ -299,7 +310,7 @@ func TestRunNewPromptResetsCap(t *testing.T) {
 	if _, out, _ := s.run("claude-code", s.payload("Stop", false)); out != "" {
 		t.Fatalf("4th stop blocked: %q", out)
 	}
-	if code, out, _ := s.run("claude-code", s.payload("UserPromptSubmit", false)); code != 0 || out != "" {
+	if code, out, _ := s.run("claude-code", s.promptPayload("now also add a timeout to fetch")); code != 0 || out != "" {
 		t.Fatalf("prompt: exit %d stdout %q", code, out)
 	}
 	if m := s.meta(); m.Feedbacks != 0 {
@@ -311,6 +322,56 @@ func TestRunNewPromptResetsCap(t *testing.T) {
 	}
 	if m := s.meta(); m.Feedbacks != 1 {
 		t.Errorf("feedbacks %d, want 1", m.Feedbacks)
+	}
+}
+
+// An agent that delivers the block reason as a new prompt (a Stop-block
+// continuation) must not reset the cap, or it would loop forever.
+func TestRunReportPromptKeepsCap(t *testing.T) {
+	s := started(t)
+	s.askedEdit()
+	s.unaskedEdit()
+	for i := 1; i <= 3; i++ {
+		_, out, _ := s.run("codex", s.payload("Stop", false))
+		_, reason := decode(t, out)
+		if code, _, _ := s.run("codex", s.promptPayload("  "+reason)); code != 0 {
+			t.Fatalf("prompt exit %d", code)
+		}
+	}
+	if _, out, errs := s.run("codex", s.payload("Stop", false)); out != "" || !strings.Contains(errs, capWarning) {
+		t.Fatalf("4th stop: stdout %q stderr %q", out, errs)
+	}
+	d, err := adapter.CaptureDir(s.repo(), "codex", "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := adapter.LoadMeta(d); err != nil || m.Feedbacks != 3 {
+		t.Errorf("feedbacks %v, %v; want 3", m, err)
+	}
+}
+
+func TestRunDeadLockOwnerTakenOver(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PID liveness is not checked on Windows")
+	}
+	s := started(t)
+	s.askedEdit()
+	s.unaskedEdit()
+	cmd := exec.Command("git", "--version")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	dead := cmd.Process.Pid
+	lock := filepath.Join(s.captureDir(), lockName)
+	if err := os.WriteFile(lock, []byte(strconv.Itoa(dead)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, out, _ := s.run("claude-code", s.payload("Stop", false)); out == "" {
+		t.Fatalf("lock of a dead process not taken over; log %s", s.hookLog())
+	}
+	if el := time.Since(start); el > 900*time.Millisecond {
+		t.Errorf("took %v: waited for a dead owner", el)
 	}
 }
 

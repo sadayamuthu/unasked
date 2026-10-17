@@ -43,7 +43,8 @@ type Spec struct {
 	Respond func(w io.Writer, rep *report.Report, feedback bool) (exit int)
 	// Extra lists paths captured beside the transcript (subagent transcripts).
 	Extra func(p Payload) []string
-	// TrustNote is printed after an install that changed the config.
+	// TrustNote is printed after an install that changed the config (a new
+	// or changed hook must be trusted again).
 	TrustNote string
 }
 
@@ -51,6 +52,7 @@ type Spec struct {
 type Payload struct {
 	Event, Session, TranscriptPath, Cwd string
 	StopHookActive                      bool
+	Prompt                              string // UserPromptSubmit only
 }
 
 // Specs returns every supported agent, sorted by name.
@@ -155,10 +157,15 @@ func Status(s Spec, home, repo string) (installed bool, path string) {
 }
 
 // edit applies change to the JSON config at path and writes it back when it
-// changed. A symlinked config is edited at its target.
+// changed. A symlinked config is edited at its target; a dangling symlink
+// is refused rather than replaced.
 func edit(path string, change func(map[string]any) (map[string]any, bool)) (string, bool, error) {
 	target := path
-	if r, err := filepath.EvalSymlinks(path); err == nil {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		r, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return path, false, fmt.Errorf("%s is a symlink to a missing file; fix the link, then re-run", path)
+		}
 		target = r
 	}
 	doc, err := load(target)
@@ -429,6 +436,7 @@ func parseCommon(stdin []byte) (Payload, error) {
 		TranscriptPath string `json:"transcript_path"`
 		Cwd            string `json:"cwd"`
 		StopHookActive bool   `json:"stop_hook_active"`
+		Prompt         string `json:"prompt"`
 	}
 	if err := json.Unmarshal(stdin, &v); err != nil {
 		return Payload{}, fmt.Errorf("hook payload: %w", err)
@@ -436,7 +444,7 @@ func parseCommon(stdin []byte) (Payload, error) {
 	if v.Event == "" {
 		return Payload{}, errors.New("hook payload: no hook_event_name")
 	}
-	return Payload{Event: v.Event, Session: v.Session, TranscriptPath: v.TranscriptPath, Cwd: v.Cwd, StopHookActive: v.StopHookActive}, nil
+	return Payload{Event: v.Event, Session: v.Session, TranscriptPath: v.TranscriptPath, Cwd: v.Cwd, StopHookActive: v.StopHookActive, Prompt: v.Prompt}, nil
 }
 
 // blockResponse writes {"decision":"block","reason":<feedback text>}, the

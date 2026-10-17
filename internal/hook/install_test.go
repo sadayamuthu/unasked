@@ -262,3 +262,45 @@ func TestCommandQuoting(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallRefusesDanglingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home, path := seed(t, ClaudeCode, "", 0)
+	missing := filepath.Join(t.TempDir(), "gone.json")
+	if err := os.Symlink(missing, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Install(ClaudeCode, home, "", false, testBin); err == nil {
+		t.Fatal("no error for a dangling symlink")
+	}
+	if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("symlink replaced")
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Error("symlink target created")
+	}
+}
+
+func TestInstallRefusesUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	home, path := seed(t, ClaudeCode, "claude-existing.json", 0o600)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o600) })
+	if _, _, err := Install(ClaudeCode, home, "", false, testBin); err == nil {
+		t.Fatal("no error for an unreadable config")
+	}
+	if _, err := os.Stat(path + backupSuffix); !os.IsNotExist(err) {
+		t.Error("backup written")
+	}
+	os.Chmod(path, 0o600)
+	golden(t, "claude-existing.json", readFile(t, path))
+	if ok, _ := Status(ClaudeCode, home, ""); ok {
+		t.Error("status reports installed")
+	}
+}

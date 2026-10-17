@@ -476,6 +476,9 @@ func TestHookCLI(t *testing.T) {
 	if !strings.Contains(out, "installed codex hook in "+codexPath) || !strings.Contains(out, "Codex: open /hooks in Codex once to trust the unasked hook.") {
 		t.Errorf("codex install: %q", out)
 	}
+	if out := c.want(0, "hook", "install", "--agent", "codex", "--project"); strings.Contains(out, "Codex: open /hooks") {
+		t.Errorf("trust note printed for an unchanged config: %q", out)
+	}
 	if out := c.want(0, "doctor"); !regexp.MustCompile(`(?m)^codex .* project `).MatchString(out) {
 		t.Errorf("doctor project hook:\n%s", out)
 	}
@@ -515,5 +518,19 @@ func TestHookRunCLINeverFails(t *testing.T) {
 		if code != 0 || o.Len() != 0 {
 			t.Errorf("%v: exit %d stdout %q", args, code, o.String())
 		}
+	}
+}
+
+func TestStartDirHookRunWithoutCwd(t *testing.T) {
+	gone := func() (string, error) { return "", errors.New("getwd: no such file or directory") }
+	if d, err := startDir([]string{"hook", "run", "--agent", "codex"}, gone); err != nil || d != "" {
+		t.Errorf("hook run: %q, %v", d, err)
+	}
+	if _, err := startDir([]string{"doctor"}, gone); err == nil {
+		t.Error("doctor without a cwd: no error")
+	}
+	ok := func() (string, error) { return "/w", nil }
+	if d, err := startDir([]string{"doctor"}, ok); err != nil || d != "/w" {
+		t.Errorf("doctor: %q, %v", d, err)
 	}
 }
