@@ -19,6 +19,7 @@ type record struct {
 	Type             string `json:"type"`
 	IsMeta           bool   `json:"isMeta"`
 	IsCompactSummary bool   `json:"isCompactSummary"`
+	IsSidechain      bool   `json:"isSidechain"`
 	Cwd              string `json:"cwd"`
 	Version          string `json:"version"`
 	Timestamp        string `json:"timestamp"`
@@ -44,6 +45,8 @@ type state struct {
 	promptTimes []time.Time
 	roots       map[string]string
 	spans       bool // Start/End already set
+	nonEmpty    bool // some input held non-blank content
+	records     int  // recognised user/assistant records
 }
 
 func newState() *state { return &state{roots: map[string]string{}} }
@@ -77,6 +80,9 @@ func (st *state) read(r io.Reader, sub bool) error {
 }
 
 func (st *state) line(line []byte, sub bool, pending *strings.Builder) {
+	if len(bytes.TrimSpace(line)) > 0 {
+		st.nonEmpty = true
+	}
 	if !bytes.Contains(line, []byte(`"type":"user"`)) && !bytes.Contains(line, []byte(`"type":"assistant"`)) {
 		return
 	}
@@ -84,6 +90,7 @@ func (st *state) line(line []byte, sub bool, pending *strings.Builder) {
 	if json.Unmarshal(line, &rec) != nil || (rec.Type != "user" && rec.Type != "assistant") {
 		return
 	}
+	st.records++
 	ts, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
 	if !sub {
 		if st.tr.Version == "" {
@@ -97,7 +104,7 @@ func (st *state) line(line []byte, sub bool, pending *strings.Builder) {
 		}
 	}
 	if rec.Type == "user" {
-		if sub || rec.IsMeta || rec.IsCompactSummary {
+		if sub || rec.IsSidechain || rec.IsMeta || rec.IsCompactSummary {
 			return
 		}
 		if text, ok := promptText(rec.Message.Content); ok {
@@ -148,16 +155,15 @@ func (st *state) turnAt(ts time.Time, sub bool) int {
 }
 
 func promptText(raw json.RawMessage) (string, bool) {
-	var text string
+	var parts []string
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		text = s
+		parts = []string{s}
 	} else {
 		var blocks []block
 		if json.Unmarshal(raw, &blocks) != nil {
 			return "", false
 		}
-		var parts []string
 		for _, b := range blocks {
 			if b.Type == "tool_result" {
 				return "", false
@@ -166,18 +172,33 @@ func promptText(raw json.RawMessage) (string, bool) {
 				parts = append(parts, b.Text)
 			}
 		}
-		text = strings.Join(parts, "\n")
 	}
+	var keep []string
+	for _, p := range parts {
+		if skipBlock(p) {
+			continue
+		}
+		keep = append(keep, p)
+	}
+	text := strings.Join(keep, "\n")
 	if strings.TrimSpace(text) == "" {
 		return "", false
 	}
+	return text, true
+}
+
+// skipBlock reports whether one text block is harness noise, not user input.
+func skipBlock(text string) bool {
 	trimmed := strings.TrimLeft(text, " \t\r\n")
+	if strings.TrimSpace(trimmed) == "" || strings.HasPrefix(trimmed, "[Request interrupted by user") {
+		return true
+	}
 	for _, p := range skipPrefixes {
 		if strings.HasPrefix(trimmed, p) {
-			return "", false
+			return true
 		}
 	}
-	return text, true
+	return false
 }
 
 func (st *state) edit(b block, cwd, statement string) (model.EditEvent, bool) {
@@ -269,6 +290,11 @@ func (st *state) finish() (*model.Transcript, adapter.Capabilities) {
 	tr := st.tr
 	tr.Turns = len(tr.Prompts)
 	caps := adapter.Capabilities{Level: adapter.Full, Hook: adapter.HookBlock}
+	if st.records == 0 && st.nonEmpty {
+		caps.Level = adapter.DiffOnly
+		caps.Degraded = "claude-code: no recognised records"
+		return &tr, caps
+	}
 	if v := tr.Version; v != "" && !knownMajor(v) {
 		caps.Degraded = "claude-code " + v + ": unknown format version"
 		caps.Level = adapter.DiffOnly
@@ -278,6 +304,10 @@ func (st *state) finish() (*model.Transcript, adapter.Capabilities) {
 			caps.Prompts = true
 		}
 		return &tr, caps
+	}
+	if tr.Version == "" && st.records > 0 {
+		caps.Level = adapter.Partial
+		caps.Degraded = "claude-code: version unknown"
 	}
 	caps.Prompts = len(tr.Prompts) > 0
 	caps.Edits = len(tr.Edits) > 0

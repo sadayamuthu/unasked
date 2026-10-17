@@ -322,3 +322,61 @@ func TestRepoRelativeUsesGitRoot(t *testing.T) {
 }
 
 func jsonStr(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+func TestPromptBlocksFilteredPerBlock(t *testing.T) {
+	cwd := t.TempDir()
+	blk := func(s string) string { return `{"type":"text","text":` + jsonStr(s) + `}` }
+	in := strings.Join([]string{
+		userLine(cwd, `[`+blk("real one")+`,`+blk("<system-reminder>r</system-reminder>")+`]`),
+		userLine(cwd, `[`+blk("<system-reminder>r</system-reminder>")+`,`+blk("real two")+`]`),
+		userLine(cwd, `[`+blk("[unasked report]\nx")+`,`+blk("real three")+`]`),
+		userLine(cwd, `[`+blk("[Request interrupted by user]")+`]`),
+		userLine(cwd, `[`+blk("[Request interrupted by user for tool use]")+`]`),
+		userLine(cwd, `[`+blk("<command-name>x</command-name>")+`,`+blk("real four")+`]`),
+		line("user", cwd, `"isSidechain":true,"message":{"content":"side prompt"}`),
+	}, "\n") + "\n"
+	tr, _ := capture(t, in)
+	var got []string
+	for _, p := range tr.Prompts {
+		got = append(got, p.Text)
+	}
+	want := []string{"real one", "real two", "real three", "real four"}
+	if strings.Join(got, "|") != strings.Join(want, "|") || tr.Prompts[3].Turn != 4 {
+		t.Fatalf("prompts = %+v", tr.Prompts)
+	}
+}
+
+func TestSidechainEditsStillCount(t *testing.T) {
+	cwd := t.TempDir()
+	in := userLine(cwd, `"go"`) + "\n" +
+		line("assistant", cwd, `"isSidechain":true,"message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"a.txt","content":"x"}}]}`) + "\n"
+	tr, _ := capture(t, in)
+	if len(tr.Edits) != 1 {
+		t.Fatalf("edits = %+v", tr.Edits)
+	}
+}
+
+func TestUnrecognisedAndVersionlessDegrade(t *testing.T) {
+	_, caps := capture(t, "{\"type\":\"summary\"}\ngarbage\n")
+	if caps.Level != adapter.DiffOnly || caps.Degraded != "claude-code: no recognised records" {
+		t.Errorf("caps = %+v", caps)
+	}
+	_, caps = capture(t, "")
+	if caps.Degraded != "" {
+		t.Errorf("empty file degraded: %+v", caps)
+	}
+	in := `{"type":"user","message":{"content":"hi"}}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"a","content":"x"}}]}}` + "\n"
+	tr, caps := capture(t, in)
+	if caps.Level != adapter.Partial || caps.Degraded != "claude-code: version unknown" || len(tr.Prompts) != 1 || len(tr.Edits) != 1 {
+		t.Errorf("caps = %+v tr = %+v", caps, tr)
+	}
+}
+
+func TestNoHomeDetectsNothing(t *testing.T) {
+	a := New("")
+	ss, err := a.Find(t.TempDir(), time.Time{})
+	if a.Detect() || len(ss) != 0 || err != nil {
+		t.Errorf("detect=%v sessions=%v err=%v", a.Detect(), ss, err)
+	}
+}

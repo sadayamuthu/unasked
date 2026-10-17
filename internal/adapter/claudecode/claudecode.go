@@ -36,6 +36,9 @@ func (c claude) MaxLevel() adapter.Level { return adapter.Full }
 func (c claude) projects() string { return filepath.Join(c.home, ".claude", "projects") }
 
 func (c claude) Detect() bool {
+	if c.home == "" {
+		return false
+	}
 	fi, err := os.Stat(c.projects())
 	return err == nil && fi.IsDir()
 }
@@ -47,6 +50,9 @@ const headScanLines = 200
 // modified at or after since. It opens candidate files rather than trusting
 // the encoded directory name, which is lossy.
 func (c claude) Find(repoDir string, since time.Time) ([]adapter.Session, error) {
+	if c.home == "" {
+		return nil, nil
+	}
 	dirs, err := os.ReadDir(c.projects())
 	if err != nil {
 		if os.IsNotExist(err) {
