@@ -85,7 +85,25 @@ func TestLoadTellsMissingAndBadUserFile(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("(unclosed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadTells(bad); err == nil {
-		t.Error("invalid regexp in user file should error")
+	// m3: a bad user pattern is skipped with a one-time warning; the other
+	// lines still load and nothing fails (the hook must keep running).
+	if err := os.WriteFile(bad, []byte("(unclosed\nsneaky\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var warn strings.Builder
+	old := warnOut
+	warnOut = &warn
+	t.Cleanup(func() { warnOut = old })
+	for range 2 {
+		ut, err := LoadTells(bad)
+		if err != nil {
+			t.Fatalf("bad user pattern: %v", err)
+		}
+		if got := ut.Match("a sneaky change"); got != "sneaky" {
+			t.Errorf("good user line lost: %q", got)
+		}
+	}
+	if n := strings.Count(warn.String(), "unasked: warning: "); n != 1 || !strings.Contains(warn.String(), bad+":1") {
+		t.Errorf("warnings (want one naming %s:1):\n%s", bad, warn.String())
 	}
 }

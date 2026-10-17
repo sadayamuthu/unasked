@@ -4,11 +4,13 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 //go:embed tells.txt
@@ -30,13 +32,29 @@ func UserTellsFile() string {
 	return filepath.Join(dir, "unasked", "tells.txt")
 }
 
+// warnOut receives warnings about the user's tells file; tests replace it.
+var warnOut io.Writer = os.Stderr
+
+// warned holds the warnings already written, so each is written once per
+// process.
+var warned sync.Map
+
+func warnOnce(msg string) {
+	if _, dup := warned.LoadOrStore(msg, true); !dup {
+		fmt.Fprintln(warnOut, "unasked: warning: "+msg)
+	}
+}
+
 // LoadTells compiles the embedded tells.txt plus, appended after it, the
 // patterns in userFile. Each non-blank line not starting with '#' is a Go
 // regexp, matched case-insensitively at word boundaries. An empty userFile
-// or a missing file is not an error; an unreadable file or a bad pattern is.
+// or a missing file is not an error. The user's file never fails the run (a
+// broken tells file must not stop reports or disable the hook): a bad
+// pattern is skipped, and an unreadable file ignored, with a one-time
+// warning on stderr. Only a bad embedded pattern is an error.
 func LoadTells(userFile string) (*Tells, error) {
 	t := &Tells{}
-	if err := t.add("tells.txt (embedded)", embeddedTells); err != nil {
+	if err := t.add("tells.txt (embedded)", embeddedTells, false); err != nil {
 		return nil, err
 	}
 	if userFile == "" {
@@ -47,15 +65,16 @@ func LoadTells(userFile string) (*Tells, error) {
 		return t, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("tells: %w", err)
+		warnOnce(fmt.Sprintf("tells: %v; your tells are ignored", err))
+		return t, nil
 	}
-	if err := t.add(userFile, string(b)); err != nil {
-		return nil, err
-	}
+	_ = t.add(userFile, string(b), true)
 	return t, nil
 }
 
-func (t *Tells) add(name, text string) error {
+// add compiles each pattern line of text. With skipBad a bad pattern is
+// skipped with a warning instead of failing.
+func (t *Tells) add(name, text string, skipBad bool) error {
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -63,7 +82,12 @@ func (t *Tells) add(name, text string) error {
 		}
 		re, err := regexp.Compile(`(?i)\b(?:` + line + `)\b`)
 		if err != nil {
-			return fmt.Errorf("tells: %s:%d: %w", name, i+1, err)
+			err = fmt.Errorf("tells: %s:%d: %w", name, i+1, err)
+			if !skipBad {
+				return err
+			}
+			warnOnce(err.Error() + "; line skipped")
+			continue
 		}
 		t.res = append(t.res, re)
 	}
