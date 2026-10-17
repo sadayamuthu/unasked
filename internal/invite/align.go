@@ -48,9 +48,13 @@ func Align(h model.Hunk, edits []model.EditEvent) *model.EditEvent {
 			return &edits[i]
 		}
 	}
+	need := lcsMin * float64(len(h.Added))
 	for _, i := range order {
 		after := strings.Split(normalizeEOL(edits[i].After), "\n")
-		if float64(lcsLen(h.Added, after)) >= lcsMin*float64(len(h.Added)) {
+		if float64(len(after)) < need {
+			continue // LCS ≤ len(after): 0.8 is out of reach
+		}
+		if float64(lcsLen(h.Added, after)) >= need {
 			return &edits[i]
 		}
 	}
@@ -61,7 +65,8 @@ func normalizeEOL(s string) string {
 	return strings.ReplaceAll(s, "\r\n", "\n")
 }
 
-// lcsLen is the length of the longest common subsequence of lines a and b.
+// lcsLen is the length of the longest common subsequence of lines a and b,
+// in O(len(a)·len(b)) time and O(len(b)) space.
 func lcsLen(a, b []string) int {
 	prev := make([]int, len(b)+1)
 	cur := make([]int, len(b)+1)

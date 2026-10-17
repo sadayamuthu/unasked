@@ -140,11 +140,10 @@ func TestScorePromptFiltering(t *testing.T) {
 		if got[0].AskedKnown || got[0].Verdict != model.VerdictUnclear || got[0].Reason != "no usable prompt" {
 			t.Errorf("%s: %+v", name, got[0])
 		}
-		// With an aligned event, rule 1 no longer applies (R4): Test 1 is
-		// skipped and the hunk falls through to rules 2–6.
+		// An aligned event changes nothing: no usable prompt is rule 1 (§6.4).
 		got = Score(Input{Hunks: []model.Hunk{h}, Th: Default, Classify: notRisky,
 			Transcript: &model.Transcript{Prompts: prompts, Edits: []model.EditEvent{ev}}})
-		if got[0].AskedKnown || got[0].Asked != 0 || got[0].Reason == "no usable prompt" {
+		if got[0].AskedKnown || got[0].Event == nil || got[0].Verdict != model.VerdictUnclear || got[0].Reason != "no usable prompt" {
 			t.Errorf("%s with event: %+v", name, got[0])
 		}
 	}
