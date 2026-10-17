@@ -41,7 +41,6 @@ var (
 	routeRe       = regexp.MustCompile(`^/[\w/:{}-]+$`)
 	flagRe        = regexp.MustCompile(`^--?[a-z][\w-]*$`)
 	envRe         = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,}$`)
-	goImportRe    = regexp.MustCompile(`^(import\b.*|(\w+|\.|_)?\s*"[^"]+"|\))$`)
 	jsImportRe    = regexp.MustCompile(`^(import\b.*|\}?\s*from\s+['"].*|(const|let|var)\s+.*=\s*require\(.*|require\(.*)$`)
 	pyImportRe    = regexp.MustCompile(`^(import\s+\S.*|from\s+\S+\s+import\b.*)$`)
 	funcLineRe    = regexp.MustCompile(`^(func|def|function|fn|async function|export function)\b`)
@@ -176,11 +175,21 @@ func deletionOf(h model.Hunk) deletion {
 		return deletion{found: true, file: true, what: "file"}
 	}
 	var d deletion
-	// A removed symbol re-added under another name (a rename) is not a
-	// deletion; only the net loss counts.
-	if len(h.Symbols.Removed) > len(h.Symbols.Added) {
-		d.terms = append(d.terms, h.Symbols.Removed...)
-		d.what = symbolKind(h.Removed)
+	// Every removed symbol not re-added under the same name is a deletion
+	// term, unless the hunk is a pure single-symbol rename (R11).
+	if !isRename(h) {
+		added := map[string]bool{}
+		for _, a := range h.Symbols.Added {
+			added[a] = true
+		}
+		for _, r := range h.Symbols.Removed {
+			if !added[r] {
+				d.terms = append(d.terms, r)
+			}
+		}
+		if len(d.terms) > 0 {
+			d.what = symbolKind(h.Removed)
+		}
 	}
 	addedLits := map[string]bool{}
 	for _, l := range literals(h.Added) {
@@ -201,10 +210,35 @@ func deletionOf(h model.Hunk) deletion {
 		return d
 	}
 	// Pure removal of real code: never let it be invited by a statement.
-	if len(h.Added) == 0 && removesCode(h) {
+	if allBlankOrComment(h.Added) && removesCode(h) {
 		return deletion{found: true, what: "symbol"}
 	}
 	return d
+}
+
+// isRename reports whether the hunk removes exactly one symbol and adds
+// exactly one, and its removed and added lines are equal (whitespace
+// normalised, same count) once the old name is replaced by the new as a
+// whole word.
+func isRename(h model.Hunk) bool {
+	if len(h.Symbols.Removed) != 1 || len(h.Symbols.Added) != 1 || len(h.Removed) != len(h.Added) {
+		return false
+	}
+	oldN, newN := h.Symbols.Removed[0], h.Symbols.Added[0]
+	if oldN == newN {
+		return false
+	}
+	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(oldN) + `\b`)
+	if err != nil {
+		return false
+	}
+	for i, l := range h.Removed {
+		l = re.ReplaceAllLiteralString(l, newN)
+		if strings.Join(strings.Fields(l), " ") != strings.Join(strings.Fields(h.Added[i]), " ") {
+			return false
+		}
+	}
+	return true
 }
 
 func symbolKind(removed []string) string {
@@ -229,12 +263,22 @@ func isComment(l string) bool {
 	return false
 }
 
+func allBlankOrComment(lines []string) bool {
+	for _, l := range lines {
+		if t := strings.TrimSpace(l); t != "" && !isComment(t) {
+			return false
+		}
+	}
+	return true
+}
+
 // removesCode reports whether a removed line is neither blank, a comment,
 // nor an import line.
 func removesCode(h model.Hunk) bool {
-	for _, l := range h.Removed {
+	imp := importFlags(h, h.Removed)
+	for i, l := range h.Removed {
 		t := strings.TrimSpace(l)
-		if t == "" || isComment(t) || isImportLine(h.File, t) {
+		if t == "" || isComment(t) || imp[i] {
 			continue
 		}
 		return true
@@ -242,46 +286,123 @@ func removesCode(h model.Hunk) bool {
 	return false
 }
 
-func stripSpace(lines []string) string {
+var wsRunRe = regexp.MustCompile(`\s+`)
+
+var importKwRe = regexp.MustCompile(`^import\b`)
+
+var wsSignificantExt = map[string]bool{
+	".py": true, ".pyi": true, ".yml": true, ".yaml": true, ".mk": true,
+	".haml": true, ".pug": true, ".slim": true, ".coffee": true, ".sass": true, ".styl": true,
+}
+
+func wsSignificant(file string) bool {
+	return wsSignificantExt[strings.ToLower(path.Ext(file))] || path.Base(file) == "Makefile"
+}
+
+// normLine trims the line and collapses interior whitespace runs outside
+// string literals; literal contents are kept exactly.
+func normLine(l string) string {
+	l = strings.TrimSpace(l)
 	var b strings.Builder
-	for _, l := range lines {
-		for _, r := range l {
-			if !unicode.IsSpace(r) {
-				b.WriteRune(r)
-			}
-		}
+	last := 0
+	for _, m := range literalRe.FindAllStringIndex(l, -1) {
+		b.WriteString(wsRunRe.ReplaceAllString(l[last:m[0]], " "))
+		b.WriteString(l[m[0]:m[1]])
+		last = m[1]
 	}
+	b.WriteString(wsRunRe.ReplaceAllString(l[last:], " "))
 	return b.String()
 }
 
+func leadingWS(l string) string { return l[:len(l)-len(strings.TrimLeft(l, " \t"))] }
+
+func nonBlank(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// whitespaceOnly: the non-blank added and removed lines pair up one to one
+// and are equal after normLine; in whitespace-significant files the leading
+// indentation must be identical too.
 func whitespaceOnly(h model.Hunk) bool {
 	if len(h.Added)+len(h.Removed) == 0 {
 		return false
 	}
-	return stripSpace(h.Added) == stripSpace(h.Removed)
+	a, r := nonBlank(h.Added), nonBlank(h.Removed)
+	if len(a) != len(r) {
+		return false
+	}
+	sig := wsSignificant(h.File)
+	for i := range a {
+		if normLine(a[i]) != normLine(r[i]) || (sig && leadingWS(a[i]) != leadingWS(r[i])) {
+			return false
+		}
+	}
+	return true
 }
 
-func isImportLine(file, t string) bool {
-	switch strings.ToLower(path.Ext(file)) {
-	case ".go":
-		return goImportRe.MatchString(t)
-	case ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
-		return jsImportRe.MatchString(t)
-	case ".py":
-		return pyImportRe.MatchString(t)
+var goQuotedRe = regexp.MustCompile(`^(\w+|\.|_)?\s*"[^"]+"$`)
+
+// importFlags marks which of lines are import lines. Go lines count only
+// after an import keyword or inside an import ( ... ) block seen in the same
+// list; with no opener, a bare quoted path counts only when every non-blank
+// line is one and the hunk has no enclosing symbol.
+func importFlags(h model.Hunk, lines []string) []bool {
+	flags := make([]bool, len(lines))
+	ext := strings.ToLower(path.Ext(h.File))
+	if ext != ".go" {
+		for i, l := range lines {
+			t := strings.TrimSpace(l)
+			switch ext {
+			case ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
+				flags[i] = jsImportRe.MatchString(t)
+			case ".py":
+				flags[i] = pyImportRe.MatchString(t)
+			}
+		}
+		return flags
 	}
-	return false
+	inBlock, sawOpener, allQuoted := false, false, true
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		switch {
+		case t == "":
+		case importKwRe.MatchString(t):
+			flags[i] = true
+			sawOpener = true
+			inBlock = strings.HasSuffix(t, "(")
+			allQuoted = false
+		case inBlock && t == ")":
+			flags[i], inBlock = true, false
+		case inBlock && goQuotedRe.MatchString(t):
+			flags[i] = true
+		default:
+			if !goQuotedRe.MatchString(t) {
+				allQuoted = false
+			}
+		}
+	}
+	if !sawOpener && allQuoted && h.Symbols.Enclosing == "" {
+		for i, l := range lines {
+			flags[i] = strings.TrimSpace(l) != ""
+		}
+	}
+	return flags
 }
 
 func importOnly(h model.Hunk) bool {
 	n := 0
 	for _, ls := range [][]string{h.Added, h.Removed} {
-		for _, l := range ls {
-			t := strings.TrimSpace(l)
-			if t == "" {
+		for i, f := range importFlags(h, ls) {
+			if strings.TrimSpace(ls[i]) == "" {
 				continue
 			}
-			if !isImportLine(h.File, t) {
+			if !f {
 				return false
 			}
 			n++

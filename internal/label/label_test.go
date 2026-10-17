@@ -225,3 +225,82 @@ func TestXRefsOverCapUsesBatches(t *testing.T) {
 		t.Errorf("got %d, want 2", n)
 	}
 }
+
+func TestRemovedSymbolHiddenByUnrelatedAddition(t *testing.T) {
+	h := hk("a.go", []string{"func NewThing() { do() }"}, []string{"func Old() {}"},
+		model.SymbolDelta{Added: []string{"NewThing"}, Removed: []string{"Old"}})
+	if l, hr := Classify(h, nil); l != model.LabelDeletion || !hr {
+		t.Errorf("unrelated addition: got %s/%v", l, hr)
+	}
+	if d := deletionOf(h); len(d.terms) != 1 || d.terms[0] != "Old" {
+		t.Errorf("terms = %v", d.terms)
+	}
+	rn := hk("a.go", []string{"func  New(x int) { New(x) }"}, []string{"func Old(x int) { Old(x) }"},
+		model.SymbolDelta{Added: []string{"New"}, Removed: []string{"Old"}})
+	if l, _ := Classify(rn, nil); l == model.LabelDeletion {
+		t.Errorf("true rename labelled %s", l)
+	}
+	// Same size, different body: not a rename.
+	rn.Added = []string{"func New(x int) { other(x) }"}
+	if l, _ := Classify(rn, nil); l != model.LabelDeletion {
+		t.Errorf("rename with changed body: got %s", l)
+	}
+}
+
+func TestWhitespaceOnlyStrict(t *testing.T) {
+	cases := []struct {
+		name string
+		h    model.Hunk
+		want bool
+	}{
+		{"python dedent", hk("a.py", []string{"    run()"}, []string{"        run()"}, model.SymbolDelta{}), false},
+		{"yaml indent", hk("a.yml", []string{"b: 1"}, []string{"  b: 1"}, model.SymbolDelta{}), false},
+		{"string content", hk("a.go", []string{`x := "ab"`}, []string{`x := "a b"`}, model.SymbolDelta{}), false},
+		{"gofmt realign", hk("a.go", []string{"\tName string", "\tAge  int"}, []string{"\tName   string", "\tAge int"}, model.SymbolDelta{}), true},
+		{"go tabs", hk("a.go", []string{"\tx := 1"}, []string{"    x := 1"}, model.SymbolDelta{}), true},
+		{"different counts", hk("a.go", []string{"a", "b"}, []string{"a b"}, model.SymbolDelta{}), false},
+	}
+	for _, c := range cases {
+		if got := whitespaceOnly(c.h); got != c.want {
+			t.Errorf("%s: got %v", c.name, got)
+		}
+	}
+}
+
+func TestGoImportDetectionStrict(t *testing.T) {
+	bare := hk("a.go", []string{`"--force"`}, nil, model.SymbolDelta{Enclosing: "run"})
+	if l, _ := Classify(bare, nil); l == model.LabelCollateral {
+		t.Errorf("bare literal in func: %s", l)
+	}
+	mixed := hk("a.go", []string{`"--force"`, `)`}, nil, model.SymbolDelta{})
+	if l, _ := Classify(mixed, nil); l == model.LabelCollateral {
+		t.Errorf("literal plus paren: %s", l)
+	}
+	blk := hk("a.go", []string{"import (", `"os"`, `)`}, []string{"import (", `"fmt"`, `)`}, model.SymbolDelta{})
+	if l, _ := Classify(blk, nil); l != model.LabelCollateral {
+		t.Errorf("import block: %s", l)
+	}
+	if l, _ := Classify(hk("a.go", []string{`x := 1`}, nil, model.SymbolDelta{Enclosing: "important"}), nil); l == model.LabelCollateral {
+		t.Error("non-import")
+	}
+}
+
+func TestRemovalWithOnlyCommentsAddedIsDeletion(t *testing.T) {
+	h := hk("a.go", []string{"// removed check", ""}, []string{"\tcheck(err)"}, model.SymbolDelta{Enclosing: "F"})
+	if l, hr := Classify(h, nil); l != model.LabelDeletion || !hr {
+		t.Errorf("got %s/%v", l, hr)
+	}
+}
+
+func TestXRefShortTermsDoNotCrowdOut(t *testing.T) {
+	r := gittest.New(t)
+	r.Write("a.go", "x\n")
+	r.Write("b.go", "needle_long\n")
+	r.Git("add", ".")
+	r.Commit("init")
+	repo, _ := gitx.Open(r.Dir)
+	terms := []string{"a", "b", "c", "d", "e", "f", "needle_long"}
+	if n := countXRefs(repo, "a.go", terms); n != 1 {
+		t.Errorf("got %d, want 1", n)
+	}
+}

@@ -17,9 +17,16 @@ const (
 // countXRefs counts distinct tracked files other than file that contain any
 // of terms as a fixed string. Errors count as no references.
 func countXRefs(r *gitx.Repo, file string, terms []string) int {
-	if len(terms) > xrefMaxTerms {
-		terms = terms[:xrefMaxTerms]
+	var long []string
+	for _, t := range terms {
+		if len(t) >= xrefMinLength {
+			long = append(long, t)
+		}
 	}
+	if len(long) > xrefMaxTerms {
+		long = long[:xrefMaxTerms]
+	}
+	terms = long
 	var paths []string
 	over := false
 	if out, err := r.Run("ls-files", "-z"); err == nil {
