@@ -430,3 +430,28 @@ func TestFailedReadSurvivesIntersectingSession(t *testing.T) {
 		t.Fatalf("warnings = %v", sel.Warnings)
 	}
 }
+
+// TestPinnedSessionWithoutEditsKeepsBaseline (R40): a pinned session that
+// made no edit touching the diff still supplies its transcript and its own
+// captured baseline; it never falls back to HEAD, which would list the
+// developer's pre-existing work.
+func TestPinnedSessionWithoutEditsKeepsBaseline(t *testing.T) {
+	g, r := setup(t)
+	g.Write("b.txt", "developer wip\n")
+	if _, err := adapter.RecordStart(r, "claude-code", "s1", g.Dir); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := json.Marshal(g.Dir)
+	capture(t, r, "s1", fmt.Sprintf(`{"type":"user","cwd":%s,"version":"2.1.289","timestamp":%q,"message":{"role":"user","content":"why does fetch not retry on a timeout error"}}`+"\n", q, time.Now().UTC().Format(time.RFC3339)))
+
+	sel, err := adapter.Select(r, adapter.Request{SessionID: "s1", Agent: "claude-code"}, claude())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.BaseSource != "captured" || len(sel.Sessions) != 1 || len(sel.Transcript.Prompts) != 1 {
+		t.Fatalf("source=%q sessions=%+v transcript=%+v", sel.BaseSource, sel.Sessions, sel.Transcript)
+	}
+	if hasHunkFor(sel, "b.txt") || contains(sel.Warnings, "transcript: none") {
+		t.Fatalf("hunks=%+v warnings=%v", sel.Hunks, sel.Warnings)
+	}
+}

@@ -131,7 +131,13 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 			failed[c] = c.caps.Degraded
 			failedOrder = append(failedOrder, c)
 		}
-		if len(c.tr.Edits) == 0 {
+		// A pinned session (the hook's own, or --session) is the session
+		// asked about: it keeps its transcript and its own baseline even
+		// when no edit of it touches the diff, so a question-only turn is
+		// never judged against HEAD and the developer's pre-existing work
+		// (R40).
+		pinned := req.SessionID != ""
+		if len(c.tr.Edits) == 0 && !pinned {
 			continue
 		}
 		if fixedFrom != "" {
@@ -142,7 +148,7 @@ func Select(r *gitx.Repo, req Request, adapters []Adapter) (*Selection, error) {
 		if c.hs, c.bin, err = diff(c.from); err != nil {
 			return nil, err
 		}
-		if intersects(c.tr, c.hs) {
+		if pinned || intersects(c.tr, c.hs) {
 			hits = append(hits, c)
 			if !req.AllSessions {
 				break

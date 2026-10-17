@@ -17,6 +17,7 @@ import (
 	"github.com/sadayamuthu/unasked/internal/adapter"
 	"github.com/sadayamuthu/unasked/internal/gitx"
 	"github.com/sadayamuthu/unasked/internal/invite"
+	"github.com/sadayamuthu/unasked/internal/model"
 	"github.com/sadayamuthu/unasked/internal/pipeline"
 	"github.com/sadayamuthu/unasked/internal/report"
 )
@@ -135,14 +136,15 @@ func (c *call) stop(s Spec, p Payload, dir string, stdout, stderr io.Writer) (in
 	if err != nil {
 		return 0, err
 	}
-	rep, _, _, err := pipeline.Run(r, adapter.Request{SessionID: p.Session, Agent: c.agent}, invite.Default)
+	rep, scored, _, err := pipeline.Run(r, adapter.Request{SessionID: p.Session, Agent: c.agent}, invite.Default)
 	if err != nil {
 		return 0, err
 	}
 
 	feedback, saveMeta := false, false
+	actionable := feedbackWorthy(rep, scored)
 	switch {
-	case rep.Result == report.ResultUnasked && !p.StopHookActive && m.Feedbacks < maxFeedbacks:
+	case actionable && !p.StopHookActive && m.Feedbacks < maxFeedbacks:
 		// Build the text first: a report that cannot be rendered must not
 		// use up one of the session's feedbacks.
 		if _, err := FeedbackText(rep); err != nil {
@@ -150,7 +152,7 @@ func (c *call) stop(s Spec, p Payload, dir string, stdout, stderr io.Writer) (in
 		}
 		m.Feedbacks++
 		feedback, saveMeta = true, true
-	case rep.Result == report.ResultUnasked && !p.StopHookActive:
+	case actionable && !p.StopHookActive:
 		fmt.Fprintln(stderr, capWarning)
 		rep.Warnings = append(rep.Warnings, strings.TrimPrefix(capWarning, "unasked: "))
 	case rep.Result == report.ResultClean && m.Feedbacks != 0:
@@ -180,6 +182,30 @@ func (c *call) stop(s Spec, p Payload, dir string, stdout, stderr io.Writer) (in
 		errs = append(errs, err)
 	}
 	return code, errors.Join(errs...)
+}
+
+// feedbackWorthy reports whether rep may be fed back to the agent: it is
+// unasked and at least one unasked hunk aligns to one of the agent's own
+// edit tool calls (R40). Without that link the hunk may be the developer's
+// own work or a shell command's output (a diff-only or degraded transcript,
+// prompts without edits, "no agent edit found", shell-made hunks), and the
+// agent must never be told to drop it. The report still lists it.
+func feedbackWorthy(rep *report.Report, scored []model.Scored) bool {
+	if rep.Result != report.ResultUnasked {
+		return false
+	}
+	aligned := map[string]bool{}
+	for _, s := range scored {
+		if s.Event != nil {
+			aligned[s.Hunk.Hash] = true
+		}
+	}
+	for _, h := range rep.Hunks {
+		if h.Verdict == string(model.VerdictUnasked) && aligned[h.Hash] {
+			return true
+		}
+	}
+	return false
 }
 
 // lock takes dir's hook lock (O_EXCL, holding our PID), waiting up to

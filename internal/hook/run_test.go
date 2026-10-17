@@ -359,9 +359,13 @@ func TestRunNewPromptResetsCap(t *testing.T) {
 // An agent that delivers the block reason as a new prompt (a Stop-block
 // continuation) must not reset the cap, or it would loop forever.
 func TestRunReportPromptKeepsCap(t *testing.T) {
-	s := started(t)
+	s := newSession(t)
+	if code, out, _ := s.run("codex", s.payload("SessionStart", false)); code != 0 || out != "" {
+		t.Fatalf("start: exit %d stdout %q", code, out)
+	}
 	s.askedEdit()
 	s.unaskedEdit()
+	s.codexTranscript()
 	for i := 1; i <= 3; i++ {
 		_, out, _ := s.run("codex", s.payload("Stop", false))
 		_, reason := decode(t, out)
@@ -512,4 +516,95 @@ func TestHookRunUnder2s(t *testing.T) {
 	if el := time.Since(start); el > 2*time.Second {
 		t.Errorf("hook run took %v, want < 2s", el)
 	}
+}
+
+// TestRunStopQuestionOnlyKeepsPreexistingWork is the C1 regression: the
+// developer's own uncommitted test edit predates the session, and the turn
+// only answered a question. The Stop hook must not block (it would tell the
+// agent to drop the developer's work), and the pre-existing file must not
+// appear in the report: the session's captured baseline already holds it.
+func TestRunStopQuestionOnlyKeepsPreexistingWork(t *testing.T) {
+	s := newSession(t)
+	s.g.Write("fetch_test.go", "package main\n\nimport \"testing\"\n\nfunc TestFetch(t *testing.T) {}\n")
+	s.g.Commit("test")
+	s.g.Write("fetch_test.go", "package main\n\nimport \"testing\"\n\nfunc TestFetch(t *testing.T) {\n\tt.Skip(\"flaky\")\n}\n")
+	if code, out, errs := s.run("claude-code", s.payload("SessionStart", false)); code != 0 || out != "" || errs != "" {
+		t.Fatalf("start: exit %d stdout %q stderr %q", code, out, errs)
+	}
+	cwd, _ := json.Marshal(s.g.Dir)
+	s.add(fmt.Sprintf(`{"type":"assistant","cwd":%s,"version":"2.1.289","timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"fetch calls get once and returns its error; there is no retry today."}]}}`, cwd, stamp()))
+	code, out, errs := s.run("claude-code", s.payload("Stop", false))
+	if code != 0 || out != "" || errs != "" {
+		t.Fatalf("exit %d stdout %q stderr %q log %s", code, out, errs, s.hookLog())
+	}
+	var rep report.Report
+	if err := json.Unmarshal(readFile(t, filepath.Join(s.captureDir(), "report.json")), &rep); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range rep.Hunks {
+		if h.File == "fetch_test.go" {
+			t.Errorf("pre-existing file in the report: %+v", h)
+		}
+	}
+	if rep.Session != "s1" || rep.Range.BaseSource != "captured" {
+		t.Errorf("session %q base source %q", rep.Session, rep.Range.BaseSource)
+	}
+}
+
+// TestRunStopNoFeedbackWithoutAlignedEdit: with the transcript's edits
+// unreadable (an unknown Claude Code major version keeps prompts only), an
+// unasked hunk has no agent edit behind it, so the hook never tells the
+// agent to drop it.
+func TestRunStopNoFeedbackWithoutAlignedEdit(t *testing.T) {
+	s := started(t)
+	s.askedEdit()
+	s.unaskedEdit()
+	for i, l := range s.lines {
+		s.lines[i] = strings.ReplaceAll(l, `"version":"2.1.289"`, `"version":"9.0.0"`)
+	}
+	s.add(`{"type":"system"}`)
+	code, out, errs := s.run("claude-code", s.payload("Stop", false))
+	if code != 0 || out != "" || errs != "" {
+		t.Fatalf("exit %d stdout %q stderr %q log %s", code, out, errs, s.hookLog())
+	}
+	if m := s.meta(); m.Feedbacks != 0 {
+		t.Errorf("feedbacks %d", m.Feedbacks)
+	}
+}
+
+// TestRunStopNoFeedbackWhenDegraded: an unreadable transcript leaves the
+// report at diff-only, where nothing ties a hunk to the agent; the hook must
+// not block and tell the agent to drop it.
+func TestRunStopNoFeedbackWhenDegraded(t *testing.T) {
+	s := started(t)
+	s.unaskedEdit()
+	s.lines = nil
+	s.add("not json at all")
+	code, out, errs := s.run("claude-code", s.payload("Stop", false))
+	if code != 0 || out != "" || errs != "" {
+		t.Fatalf("exit %d stdout %q stderr %q log %s", code, out, errs, s.hookLog())
+	}
+	var rep report.Report
+	if err := json.Unmarshal(readFile(t, filepath.Join(s.captureDir(), "report.json")), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Result != report.ResultUnasked || rep.Transcript != "degraded" {
+		t.Errorf("result %q transcript %q (the report itself must still list it)", rep.Result, rep.Transcript)
+	}
+}
+
+// codexTranscript replaces the transcript with a Codex rollout in which the
+// agent was asked for the retry loop and also removed green from colors.txt
+// (the work tree edits are the ones askedEdit and unaskedEdit made).
+func (s *session) codexTranscript() {
+	cwd, _ := json.Marshal(s.g.Dir)
+	retryPatch, _ := json.Marshal("*** Begin Patch\n*** Update File: fetch.go\n@@\n-\treturn get(url)\n+" + strings.ReplaceAll(strings.TrimSuffix(retry, "\n"), "\n", "\n+") + "\n*** End Patch")
+	colorsPatch, _ := json.Marshal("*** Begin Patch\n*** Update File: colors.txt\n@@\n red\n-green\n*** End Patch")
+	ts := stamp()
+	s.lines = nil
+	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"session_meta","payload":{"id":"s1","cwd":%s,"cli_version":"0.99.0","timestamp":%q}}`, ts, cwd, ts))
+	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"user_message","message":"add a retry loop with exponential backoff to the fetch function"}}`, ts))
+	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":%s,"call_id":"c1"}}`, ts, retryPatch))
+	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"While I'm here, I removed green from the colors list."}]}}`, ts))
+	s.add(fmt.Sprintf(`{"timestamp":%q,"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":%s,"call_id":"c2"}}`, ts, colorsPatch))
 }
