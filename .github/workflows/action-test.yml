@@ -37,7 +37,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build a repo with a deletion branch, a feature branch and a no-op branch
         run: |
           set -eu
@@ -123,7 +123,7 @@ jobs:
     if: github.event_name == 'pull_request' && needs.released.outputs.found == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./

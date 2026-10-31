@@ -19,8 +19,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
@@ -36,8 +36,8 @@ jobs:
         goarch: [amd64, arm64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Version
@@ -89,7 +89,7 @@ jobs:
           nfpm package -f packaging/nfpm.yaml -p deb -t .
           nfpm package -f packaging/nfpm.yaml -p rpm -t .
           ls -la *.deb *.rpm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.name }}
           path: |
@@ -105,7 +105,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -133,9 +133,9 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Tags
         id: tags
         run: |
@@ -150,13 +150,13 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -180,9 +180,9 @@ jobs:
       - name: Check for token
         if: env.TAP_TOKEN == ''
         run: echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew formula update."
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.TAP_TOKEN != ''
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: env.TAP_TOKEN != ''
         with:
           path: dist
@@ -212,7 +212,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Move major tag
         env:
           TAG: ${{ github.ref_name }}
